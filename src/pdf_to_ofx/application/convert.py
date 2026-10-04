@@ -17,7 +17,7 @@ class ConversionResult:
     ofx: str
 
 
-def convert_pdf(path: Path, *, profile: OFXProfile = OFXProfile()) -> ConversionResult:
+def convert_pdf(path: Path, *, profile: OFXProfile | None = None) -> ConversionResult:
     document = extract_pdf(path)
     parser = detect_parser(document)
     statement = parser.parse(document)

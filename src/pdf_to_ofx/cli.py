@@ -22,7 +22,7 @@ def _write_output(output: Path, contents: str) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Convert the synthetic digital PDF to provisional OFX.")
+    parser = argparse.ArgumentParser(description="Convert a supported digital statement PDF to provisional OFX.")
     parser.add_argument("input", type=Path, help="Local text-based statement PDF")
     parser.add_argument("-o", "--output", type=Path, help="Output file (default: input with .ofx suffix)")
     args = parser.parse_args(argv)
@@ -46,9 +46,12 @@ def main(argv: list[str] | None = None) -> int:
     debits = sum(transaction.amount < 0 for transaction in statement.transactions)
     print(f"Bank: {result.bank_name} / {statement.layout_id}")
     print(f"Transactions: {len(statement.transactions)} (credits: {credits}, debits: {debits})")
-    opening = format(statement.opening_balance, ".2f") if statement.opening_balance is not None else "unavailable"
-    closing = format(statement.closing_balance, ".2f") if statement.closing_balance is not None else "unavailable"
-    print(f"Opening balance: {opening}; closing balance: {closing}")
+    if statement.bank_id == "synthetic":
+        opening = format(statement.opening_balance, ".2f") if statement.opening_balance is not None else "unavailable"
+        closing = format(statement.closing_balance, ".2f") if statement.closing_balance is not None else "unavailable"
+        print(f"Opening balance: {opening}; closing balance: {closing}")
+    if statement.bank_id == "inter" and statement.opening_balance is None:
+        print("Balance validation: running balances and closing balance checked; opening balance unavailable")
     print("Validation: passed")
     print(f"Output: {output}")
     return 0

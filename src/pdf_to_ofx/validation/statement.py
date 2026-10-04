@@ -41,19 +41,34 @@ def validate_statement(statement: Statement) -> None:
         if not isinstance(transaction.description, str) or not transaction.description.strip():
             raise StatementValidationError(f"Transaction {index} has no description.")
         _validate_money(transaction.amount, f"Transaction {index} amount")
+        if transaction.balance_after is not None:
+            _validate_money(transaction.balance_after, f"Transaction {index} balance")
     for value, label in ((statement.opening_balance, "Opening balance"),
                          (statement.closing_balance, "Closing balance")):
         if value is not None:
             _validate_money(value, label)
-    if statement.opening_balance is not None and statement.closing_balance is not None:
-        values = [statement.opening_balance, statement.closing_balance,
-                  *(transaction.amount for transaction in statement.transactions)]
-        # Allow all input digits and possible carries. A caller's Decimal context
-        # must not round away a financial mismatch, even for very large amounts.
-        precision = max(value.adjusted() for value in values) - min(
-            value.as_tuple().exponent for value in values
-        ) + len(str(len(values))) + 2
-        with localcontext(Context(prec=max(28, precision))):
+    has_running_balances = any(t.balance_after is not None for t in statement.transactions)
+    if has_running_balances or statement.bank_id == "inter":
+        if any(t.balance_after is None for t in statement.transactions):
+            raise StatementValidationError("Running balances must cover every transaction.")
+    values = [t.amount for t in statement.transactions]
+    values.extend(t.balance_after for t in statement.transactions if t.balance_after is not None)
+    values.extend(v for v in (statement.opening_balance, statement.closing_balance) if v is not None)
+    # Allow all input digits and carries, independent of the caller's context.
+    precision = max(value.adjusted() for value in values) - min(
+        value.as_tuple().exponent for value in values
+    ) + len(str(len(values))) + 2
+    with localcontext(Context(prec=max(28, precision))):
+        if has_running_balances:
+            previous_balance = statement.opening_balance
+            for index, transaction in enumerate(statement.transactions, start=1):
+                if (previous_balance is not None
+                        and previous_balance + transaction.amount != transaction.balance_after):
+                    raise StatementValidationError(f"Running balance mismatch at transaction {index}.")
+                previous_balance = transaction.balance_after
+            if statement.closing_balance is not None and previous_balance != statement.closing_balance:
+                raise StatementValidationError("Last running balance differs from closing balance.")
+        if statement.opening_balance is not None and statement.closing_balance is not None:
             expected = statement.opening_balance + sum(
                 (transaction.amount for transaction in statement.transactions), Decimal("0.00")
             )

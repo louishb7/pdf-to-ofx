@@ -1,0 +1,13 @@
+Solicitado em: 04/02/2027 - 10h00
+EMPRESA FICTICIA M1
+Banco Inter | Agência: 9999-9, Conta: 9999999-9
+Período: 01/02/2027 a 04/02/2027
+Saldo total Saldo disponível: Saldo bloqueado:
+R$ 1.000,00 R$ 1.000,00 R$ 0,00
+(bloqueado + disponível)
+01 de fevereiro de 2027 Saldo do dia: R$ 1.000,00 Valor Saldo por transação
+CRÉDITO FICTÍCIO ALFA R$ 250,00 R$ 1.100,00
+DÉBITO FICTÍCIO BETA -R$ 100,00 R$ 1.000,00
+02 de fevereiro de 2027 Saldo do dia: R$ 980,00
+Fale com a gente
+SAC: atendimento fictício | Ouvidoria: atendimento fictício

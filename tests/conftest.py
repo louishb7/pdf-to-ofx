@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from pdf_to_ofx.banks.synthetic import SyntheticParser
+from pdf_to_ofx.banks.inter import InterParser
 from pdf_to_ofx.domain.models import Statement
 from pdf_to_ofx.pdf.document import ExtractedDocument, ExtractedPage
 
@@ -37,6 +38,36 @@ def statement(synthetic_document: ExtractedDocument) -> Statement:
 def write_pdf() -> Callable[[str, Path], None]:
     # Use the same recipe for committed and negative integration fixtures.
     spec = importlib.util.spec_from_file_location("synthetic_fixture_generator", FIXTURE_DIRECTORY / "generate.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.write_pdf
+
+
+@pytest.fixture
+def inter_pages() -> tuple[str, ...]:
+    directory = FIXTURE_DIRECTORY.parent / "inter"
+    return tuple((directory / f"page{number}.txt").read_text(encoding="utf-8") for number in (1, 2))
+
+
+@pytest.fixture
+def inter_document(inter_pages: tuple[str, ...]) -> ExtractedDocument:
+    return ExtractedDocument(tuple(ExtractedPage(index, text) for index, text in enumerate(inter_pages, 1)))
+
+
+@pytest.fixture
+def inter_statement(inter_document: ExtractedDocument) -> Statement:
+    return InterParser().parse(inter_document)
+
+
+@pytest.fixture
+def inter_pdf() -> Path:
+    return FIXTURE_DIRECTORY.parent / "inter" / "statement.pdf"
+
+
+@pytest.fixture
+def write_inter_pdf() -> Callable[[tuple[str, ...], Path], None]:
+    spec = importlib.util.spec_from_file_location("inter_fixture_generator", FIXTURE_DIRECTORY.parent / "inter" / "generate.py")
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
