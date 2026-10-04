@@ -11,6 +11,7 @@ NUMBER = r"(?:0|[1-9][0-9]{0,2}(?:\.[0-9]{3})*|[1-9][0-9]*),[0-9]{2}"
 MONEY = re.compile(rf"(?P<sign>[+-]?)\s*(?:R\$\s*)?(?P<number>{NUMBER})(?:\s+(?P<marker>[CD]))?")
 NUMERIC_DATE = re.compile(r"([0-9]{2})/([0-9]{2})/([0-9]{4})")
 LONG_DATE = re.compile(r"([0-9]{1,2}) de ([a-zç]+) de ([0-9]{4})", re.IGNORECASE)
+SHORT_MONTH_DATE = re.compile(r"([0-9]{1,2}) ([a-zç]{3}) ([0-9]{4})", re.IGNORECASE)
 MONTHS = dict(zip(("janeiro", "fevereiro", "março", "abril", "maio", "junho",
                    "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"), range(1, 13)))
 BALANCE_LABEL = re.compile(r"\bsaldo\s+(inicial|anterior|final|total|disponível|bloqueado|do dia|diário)\b", re.IGNORECASE)
@@ -18,11 +19,15 @@ BALANCE_LABEL = re.compile(r"\bsaldo\s+(inicial|anterior|final|total|disponível
 
 def parse_date(text: str) -> date | None:
     numeric, written = NUMERIC_DATE.fullmatch(text), LONG_DATE.fullmatch(text)
+    abbreviated = SHORT_MONTH_DATE.fullmatch(text)
     try:
         if numeric:
             return date(int(numeric[3]), int(numeric[2]), int(numeric[1]))
         if written:
             return date(int(written[3]), MONTHS[written[2].casefold()], int(written[1]))
+        if abbreviated:
+            months = {name[:3]: number for name, number in MONTHS.items()}
+            return date(int(abbreviated[3]), months[abbreviated[2].casefold()], int(abbreviated[1]))
     except (ValueError, KeyError):
         pass
     return None

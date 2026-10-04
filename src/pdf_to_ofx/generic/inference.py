@@ -57,6 +57,8 @@ def infer_layout(document: ExtractedDocument, *, context: StatementContext | Non
     parser = GenericStatementParser()
     for date_mode in DateMode:
         for amount_mode in AmountMode:
+            if amount_mode == AmountMode.GROUP_SUBTOTAL:
+                continue
             for balance_mode in BalanceMode:
                 columns = ((0, 1), (1, 0)) if balance_mode == BalanceMode.RUNNING else ((0, None),)
                 for movement_column, balance_column in columns:
@@ -77,6 +79,17 @@ def infer_layout(document: ExtractedDocument, *, context: StatementContext | Non
                     elif statement.opening_balance is None or statement.closing_balance is None:
                         continue
                     accepted.append(profile)
+    from pdf_to_ofx.generic.grouped import infer_grouped_profile
+    grouped = infer_grouped_profile(rows, tolerances)
+    if grouped is not None:
+        try:
+            statement = parser.parse(document, grouped, context=context)
+        except (StatementParseError, StatementValidationError):
+            pass
+        else:
+            # This family requires independently declared opening/closing
+            # balances and reconciles every signed subtotal in the PDF.
+            accepted.append(grouped)
     if len(accepted) == 1:
         return InferenceResult(InferenceStatus.SUCCESS, accepted[0], "A unique schema passed structural and exact financial validation.")
     if len(accepted) > 1:

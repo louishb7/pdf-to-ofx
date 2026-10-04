@@ -1,0 +1,44 @@
+{
+  "pages": [
+    [
+      {"y": 40, "cells": [[35, "DOCUMENTO FICTÍCIO PARA TESTES"]]},
+      {"y": 60, "cells": [[35, "01 de abril de 2027 a 30 de abril de 2027"], [460, "Valores em R$"]]},
+      {"y": 80, "cells": [[300, "Saldo inicial"], [500, "100,00"]]},
+      {"y": 90, "cells": [[35, "Saldo final do período"]]},
+      {"y": 100, "cells": [[300, "Total de créditos"], [500, "+20,00"]]},
+      {"y": 110, "cells": [[35, "R$ 105,00"]]},
+      {"y": 125, "cells": [[300, "Total de débitos"], [500, "-15,00"]]},
+      {"y": 145, "cells": [[300, "Saldo final do período"], [500, "105,00"]]},
+      {"y": 185, "cells": [[35, "Movimentações"]]},
+      {"y": 215, "cells": [[35, "01 ABR 2027"], [110, "Total de créditos"], [490, "+20,00"]]},
+      {"y": 240, "cells": [[110, "Crédito"], [240, "CLIENTE FICTÍCIO"], [490, "10,00"]]},
+      {"y": 260, "cells": [[240, "REFERÊNCIA ALFA"]]},
+      {"y": 280, "cells": [[110, "Crédito"], [240, "CLIENTE DEMONSTRAÇÃO"], [490, "10,00"]]},
+      {"y": 720, "cells": [[35, "Contato: somente demonstração"]]},
+      {"y": 740, "cells": [[35, "Ouvidoria: somente exemplo"]]},
+      {"y": 760, "cells": [[35, "Documento gerado em 01 de maio de 2027"], [520, "1 de 3"]]}
+    ],
+    [
+      {"y": 40, "cells": [[35, "DOCUMENTO FICTÍCIO PARA TESTES"]]},
+      {"y": 60, "cells": [[35, "01 de abril de 2027 a 30 de abril de 2027"], [460, "Valores em R$"]]},
+      {"y": 85, "cells": [[240, "REFERÊNCIA BETA"]]},
+      {"y": 110, "cells": [[35, "02 ABR 2027"], [110, "Total de débitos"], [490, "-15,00"]]},
+      {"y": 130, "cells": [[110, "Débito"], [240, "FORNECEDOR FICTÍCIO"], [490, "5,00"]]},
+      {"y": 150, "cells": [[240, "CONTA DEMONSTRAÇÃO"]]},
+      {"y": 170, "cells": [[110, "Débito"], [240, "SERVIÇO LOCAL"], [490, "10,00"]]},
+      {"y": 720, "cells": [[35, "Contato: somente demonstração"]]},
+      {"y": 740, "cells": [[35, "Ouvidoria: somente exemplo"]]},
+      {"y": 760, "cells": [[35, "Documento gerado em 01 de maio de 2027"], [520, "2 de 3"]]}
+    ],
+    [
+      {"y": 40, "cells": [[35, "DOCUMENTO FICTÍCIO PARA TESTES"]]},
+      {"y": 60, "cells": [[35, "01 de abril de 2027 a 30 de abril de 2027"], [460, "Valores em R$"]]},
+      {"y": 85, "cells": [[240, "REFERÊNCIA GAMA"]]},
+      {"y": 110, "cells": [[35, "Notas administrativas fictícias sem lançamentos."]]},
+      {"y": 130, "cells": [[35, "Este documento contém somente dados de demonstração."]]},
+      {"y": 720, "cells": [[35, "Contato: somente demonstração"]]},
+      {"y": 740, "cells": [[35, "Ouvidoria: somente exemplo"]]},
+      {"y": 760, "cells": [[35, "Documento gerado em 01 de maio de 2027"], [520, "3 de 3"]]}
+    ]
+  ]
+}

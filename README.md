@@ -5,7 +5,7 @@ statements and uses OFX in its Athenas workflow. Financial document contents are
 processed locally, without external services, APIs, telemetry, or persistence
 beyond the requested output file.
 
-## Current status: M0 through M4 — Generic Statement Engine
+## Current status: M0 through M5 — Generic Statement Engine validation
 
 M0 proves a synthetic PDF → normalized statement → validation → OFX pipeline.
 M1 adds initial support for the **investigated Banco Inter digital layout**,
@@ -22,6 +22,11 @@ M4 adds positioned extraction, visual row reconstruction, portable structural
 profiles and conservative generic inference. The proven Inter and Synthetic
 parsers remain the default for their recognized layouts. Unknown institutions
 can now be interpreted structurally, with OFX export gated on explicit metadata.
+M5 validates a second real layout without adding a bank parser. It adds unsigned
+movements inside explicitly signed flow subtotals, wrapped descriptions across
+pages and conservative handling of recurring document frames. Interpretation
+and financial proof use the PDF alone; an official OFX is an optional external
+acceptance reference, never an input required by the engine.
 
 **Compatibilidade com Athenas ainda não validada.** The provisional OFX 1.02
 profile uses fictitious account metadata (`000` / `SYNTHETIC-DEMO`) only for the
@@ -175,14 +180,16 @@ PDF → own positioned words → visual rows → monetary regions
     → structural hypotheses → exact financial validation → Statement
 ```
 
-`LayoutProfile` describes grouped/per-transaction dates, signed amounts or C/D
-markers, running/absent balances, monetary-region indices, page date continuity,
-footer row counts and geometric tolerances. It contains no financial document
-data. `to_json()` / `from_json()` are deterministic, versioned and reject unknown
+`LayoutProfile` describes grouped/per-transaction dates, signed amounts, C/D
+markers or signed flow groups, running/absent balances, monetary-region indices,
+page date continuity, description boundaries, frame row counts and geometric
+tolerances. It contains no financial document data.
+`to_json()` / `from_json()` are deterministic, versioned and reject unknown
 fields or duplicate keys. No profiles are written automatically.
 
 Tolerances are centralized in `generic.structure.Tolerances`: row centers may
-vary by 3 PDF points, and tokens within a monetary cell by 12 points. Both are
+vary by 3 PDF points, tokens within a monetary cell by 12 points, and a wrapped
+summary value may follow its aligned label by at most 30 points. These are
 explicitly configurable/tested. Fixed row anchors prevent adjacent lines from
 being merged by a chain of nearby words. Monetary regions are spatially adjacent
 token runs in left-to-right order; this version does not require globally aligned
@@ -241,12 +248,38 @@ The public Inter PDF is compared directly against the specific parser, with only
 account identity supplied separately; periods, transactions and balances come
 entirely from generic interpretation.
 
-Current limits: no debit/credit split columns, wrapped transaction descriptions,
-multiple transactions on one visual row, repeated body headers, arbitrary footer
+The M5 `group_subtotal` family requires grouped dates, unsigned transaction
+amounts, explicitly signed credit/debit subtotals and declared opening/closing
+balances. Dates can use abbreviated Portuguese months. Every group must contain
+transactions and reconcile exactly; optional statement credit/debit totals are
+also checked. No operation keyword is used to infer direction. Nonzero summary
+adjustments without an interpretation as detailed transactions are rejected.
+
+`generic.grouped` keeps this additional row grammar isolated. Continuation text
+must lie in an observed description region before the numeric region, including
+across page boundaries. Profile geometry and row counts are portable, structural
+data only. Inference recognizes exact recurring headers/contact footers; parsing
+checks their declarations and any printed page count. Trailing notes may lie
+outside the transaction column, but cannot contain dated or monetary content.
+Subtotals and full-statement reconciliation still apply after frame removal.
+
+The public `grouped_subtotals_wrapped` fixture is deliberately fictitious and
+uses different column positions and frame counts from the investigated private
+layout. Tests include alternative positions, arbitrary operation labels,
+duplicates, missing pages, malformed frames and independent Decimal contexts.
+Legacy M4 JSON profiles remain readable; no automatic profile storage was added.
+
+Current limits: no debit/credit split columns, arbitrary wrapped descriptions
+outside the grouped-subtotal family, multiple transactions on one visual row,
+repeated body headers, arbitrary footer
 formats, other monetary locales, OCR, or unvalidated reverse chronological
-layouts. There is no wizard, profile storage, second real-bank support, or Windows
-packaging in M4. A future wizard can create profiles for the supported families
-and pass identity separately without changing the parser API; additional layout
+layouts. There is no wizard, profile storage, general support for whole banks, or Windows
+packaging. An additional unpaired PDF from a third institution was investigated
+only; reverse ordering with separate daily balances remains unsupported. Lack
+of official OFX is not a limitation by itself: PDF financial declarations and
+invariants provide the evidence required for interpretation. A future wizard
+can create profiles for the supported families and pass identity separately
+without changing the parser API; additional layout
 families require explicit capabilities and regression fixtures.
 
 OFX format choices and metadata live in `ofx/generator.py`. The output remains

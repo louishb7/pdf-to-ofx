@@ -10,7 +10,7 @@ from pdf_to_ofx.domain.errors import StatementParseError, StatementValidationErr
 from pdf_to_ofx.domain.models import BankAccount, Statement, Transaction
 from pdf_to_ofx.generic.profile import AmountMode, BalanceMode, DateMode, LayoutProfile
 from pdf_to_ofx.generic.semantics import (
-    LONG_DATE, NUMERIC_DATE, balance_labels, has_financial_signal, money_regions, parse_date,
+    LONG_DATE, NUMERIC_DATE, SHORT_MONTH_DATE, balance_labels, has_financial_signal, money_regions, parse_date,
 )
 from pdf_to_ofx.generic.structure import Row, reconstruct_rows
 from pdf_to_ofx.pdf.document import ExtractedDocument
@@ -46,7 +46,7 @@ class StatementContext:
 
 
 def leading_date(row: Row) -> tuple[date, int] | None:
-    for count, pattern in ((1, NUMERIC_DATE), (5, LONG_DATE)):
+    for count, pattern in ((1, NUMERIC_DATE), (5, LONG_DATE), (3, SHORT_MONTH_DATE)):
         text = " ".join(word.text for word in row.words[:count])
         if pattern.fullmatch(text):
             value = parse_date(text)
@@ -131,6 +131,11 @@ class GenericStatementParser:
 
     def parse(self, document: ExtractedDocument, profile: LayoutProfile,
               *, context: StatementContext | None = None) -> Statement:
+        if profile.amount_mode == AmountMode.GROUP_SUBTOTAL:
+            # Import locally to keep the existing row grammar independent of
+            # the additional structural family, without a bank parser registry.
+            from pdf_to_ofx.generic.grouped import parse_grouped_subtotals
+            return parse_grouped_subtotals(document, profile, context=context)
         rows = strip_footers(reconstruct_rows(document, profile.tolerances), profile)
         start = next((index for index, row in enumerate(rows) if leading_date(row) is not None), None)
         if start is None:

@@ -11,9 +11,10 @@ from pdf_to_ofx.pdf.document import ExtractedDocument, Word
 class Tolerances:
     row_y: float = 3.0
     token_gap: float = 12.0
+    summary_y: float = 30.0
 
     def __post_init__(self) -> None:
-        for value in (self.row_y, self.token_gap):
+        for value in (self.row_y, self.token_gap, self.summary_y):
             if type(value) not in (int, float) or not isfinite(value) or value < 0:
                 raise ValueError("Structural tolerances must be finite nonnegative distances.")
 

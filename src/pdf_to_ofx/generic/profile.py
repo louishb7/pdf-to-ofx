@@ -3,6 +3,7 @@
 from dataclasses import asdict, dataclass
 from enum import StrEnum
 import json
+from math import isfinite
 
 from pdf_to_ofx.generic.structure import Tolerances
 
@@ -15,6 +16,7 @@ class DateMode(StrEnum):
 class AmountMode(StrEnum):
     SIGNED = "signed"
     CREDIT_DEBIT_MARKER = "credit_debit_marker"
+    GROUP_SUBTOTAL = "group_subtotal"
 
 
 class BalanceMode(StrEnum):
@@ -32,6 +34,10 @@ class LayoutProfile:
     carry_date_across_pages: bool = True
     footer_rows: int = 0
     tolerances: Tolerances = Tolerances()
+    transaction_left: float | None = None
+    continuation_left: float | None = None
+    repeated_header_rows: int = 0
+    trailing_note_rows: int = 0
 
     def __post_init__(self) -> None:
         if (not isinstance(self.date_mode, DateMode) or not isinstance(self.amount_mode, AmountMode)
@@ -45,6 +51,20 @@ class LayoutProfile:
                 raise ValueError("Running balance requires two distinct monetary columns.")
         elif self.movement_column != 0 or self.balance_column is not None:
             raise ValueError("Absent balance requires a single movement column.")
+        for count in (self.repeated_header_rows, self.trailing_note_rows):
+            if type(count) is not int or count < 0:
+                raise ValueError("Frame row counts must be nonnegative integers.")
+        for position in (self.transaction_left, self.continuation_left):
+            if position is not None and (type(position) not in (int, float) or not isfinite(position) or position < 0):
+                raise ValueError("Description boundaries must be finite nonnegative positions.")
+        if self.amount_mode == AmountMode.GROUP_SUBTOTAL:
+            if (self.date_mode != DateMode.GROUPED or self.balance_mode != BalanceMode.ABSENT
+                    or self.transaction_left is None
+                    or (self.continuation_left is not None and self.transaction_left >= self.continuation_left)):
+                raise ValueError("Grouped subtotals require grouped dates, absent balances and ordered description boundaries.")
+        elif (self.transaction_left is not None or self.continuation_left is not None
+              or self.repeated_header_rows or self.trailing_note_rows):
+            raise ValueError("Description/frame options currently require grouped subtotals.")
 
     def to_json(self) -> str:
         return json.dumps({"version": 1, **asdict(self)}, ensure_ascii=True, sort_keys=True)
@@ -55,6 +75,7 @@ class LayoutProfile:
             fields = json.loads(text, object_pairs_hook=_unique_keys)
             required = {"date_mode", "amount_mode", "balance_mode"}
             allowed = required | {"version", "movement_column", "balance_column", "carry_date_across_pages", "footer_rows", "tolerances"}
+            allowed |= {"transaction_left", "continuation_left", "repeated_header_rows", "trailing_note_rows"}
             if (not isinstance(fields, dict) or not required <= fields.keys()
                     or not fields.keys() <= allowed or type(fields.get("version", 1)) is not int
                     or fields.get("version", 1) != 1):

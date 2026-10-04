@@ -17,7 +17,8 @@ def test_profile_is_portable_structural_data_only():
     assert payload == original.to_json()
     fields = json.loads(payload)
     assert set(fields) == {"version", "date_mode", "amount_mode", "balance_mode", "movement_column",
-                           "balance_column", "carry_date_across_pages", "footer_rows", "tolerances"}
+                           "balance_column", "carry_date_across_pages", "footer_rows", "tolerances",
+                           "transaction_left", "continuation_left", "repeated_header_rows", "trailing_note_rows"}
     assert fields["date_mode"] == "grouped"
     with pytest.raises(FrozenInstanceError):
         original.footer_rows = 2
@@ -47,3 +48,9 @@ def test_unknown_fields_and_unsupported_json_are_rejected(payload):
 def test_minimal_absent_balance_profile_json():
     result = LayoutProfile.from_json('{"date_mode":"per_transaction","amount_mode":"signed","balance_mode":"absent"}')
     assert result.balance_column is None
+
+
+def test_m4_profile_json_remains_readable_without_new_optional_fields():
+    payload = '{"date_mode":"grouped","amount_mode":"signed","balance_mode":"running_balance",' \
+              '"tolerances":{"row_y":3.0,"token_gap":12.0},"version":1}'
+    assert LayoutProfile.from_json(payload) == profile()
