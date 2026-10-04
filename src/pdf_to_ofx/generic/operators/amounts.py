@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 import re
 
-from pdf_to_ofx.domain.evidence import FinancialRole
+from pdf_to_ofx.domain.evidence import FinancialRole, SourceSpan
 from pdf_to_ofx.generic.operators.candidates import OperatorFailure
 from pdf_to_ofx.generic.operators.transactions import RowCandidate, TransactionSegment
 from pdf_to_ofx.generic.profile import AmountMode, BalanceMode, LayoutProfile
@@ -22,6 +22,18 @@ class AmountRoles:
 class ControlRole:
     region: MoneyRegion
     role: FinancialRole
+
+
+@dataclass(frozen=True, slots=True)
+class MonetaryDomain:
+    """A discovered occurrence with admissible roles, not an ownership claim."""
+    source: SourceSpan
+    region: MoneyRegion
+    roles: tuple[FinancialRole, ...]
+
+    def __post_init__(self) -> None:
+        if len(set(self.roles)) != len(self.roles) or any(not isinstance(r, FinancialRole) for r in self.roles):
+            raise ValueError("Monetary domains require distinct financial roles.")
 
 
 def infer_control_roles(candidate: RowCandidate, balance_mode: BalanceMode,

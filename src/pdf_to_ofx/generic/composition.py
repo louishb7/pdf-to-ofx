@@ -4,13 +4,13 @@ Each stage consumes candidates from the previous stage. This module never calls
 a complete legacy grammar, consults institution identity or ranks financial data.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 
-from pdf_to_ofx.domain.errors import AmbiguousStatementError, StatementParseError
+from pdf_to_ofx.domain.errors import AmbiguousStatementError, FinancialCoverageError, StatementParseError
 from pdf_to_ofx.domain.evidence import ChronologySource, DocumentRegion, FinancialRole, Interpretation, MonetaryAssignment, SourceSpan
 from pdf_to_ofx.domain.models import BalanceCheckpoint, Chronology, Statement, Transaction
-from pdf_to_ofx.generic.operators.amounts import AmountRoles, infer_amount_roles, infer_control_roles
+from pdf_to_ofx.generic.operators.amounts import AmountRoles, MonetaryDomain, infer_amount_roles, infer_control_roles
 from pdf_to_ofx.generic.operators.candidates import OperatorFailure
 from pdf_to_ofx.generic.operators.chronology import infer_chronology
 from pdf_to_ofx.generic.operators.dates import DatedSegment, attribute_dates
@@ -72,6 +72,13 @@ class CompositionInput:
     totals: tuple[tuple[str, Decimal], ...]
     declarations: tuple[MonetaryAssignment, ...]
     profile: LayoutProfile
+    monetary_domains: tuple[MonetaryDomain, ...] = ()
+
+
+def bind_declarations(prepared: CompositionInput, assignments: tuple[MonetaryAssignment, ...]) -> CompositionInput:
+    from pdf_to_ofx.generic.operators.context import bind_context_roles
+    context = bind_context_roles(prepared.context, prepared.monetary_domains, assignments)
+    return replace(prepared, context=context, declarations=(*prepared.declarations, *assignments))
 
 
 def prepare_composition(document: ExtractedDocument, profile: LayoutProfile,
@@ -103,10 +110,11 @@ def prepare_composition(document: ExtractedDocument, profile: LayoutProfile,
     body = tuple(c for c in candidates[start:] if c.kind != "balance_declaration")
     declarations = tuple(c.row for c in candidates[:start]) + tuple(
         c.row for c in candidates[start:] if c.kind == "balance_declaration")
+    domains = ()
     try:
         if not legacy_context:
             from pdf_to_ofx.generic.operators.context import read_financial_context
-            context, totals = read_financial_context(declarations, profile, context, coverage)
+            context, totals, domains = read_financial_context(declarations, profile, context, coverage)
         elif profile.amount_mode == AmountMode.GROUP_SUBTOTAL:
             from pdf_to_ofx.generic.grouped import _context
             context, totals = _context(declarations, profile, context, coverage)
@@ -118,8 +126,11 @@ def prepare_composition(document: ExtractedDocument, profile: LayoutProfile,
     except StatementParseError as error:
         raise OperatorFailure("financial_context", str(error)) from error
     segments = segment_transactions(body, profile)
+    sources = [domain.source for domain in domains]
+    if (len(sources) != len(set(sources)) or any(s not in coverage.expected or s in coverage.assignments for s in sources)):
+        raise FinancialCoverageError("Monetary domains repeat or contradict source ownership.")
     return CompositionInput(original, scopes[0], frames, body, segments, context,
-                            tuple(totals.items()), tuple(coverage.assignments.values()), profile)
+                            tuple(totals.items()), tuple(coverage.assignments.values()), profile, domains)
 
 
 def materialize_composition(prepared: CompositionInput, dated: tuple[DatedSegment, ...],
@@ -127,6 +138,9 @@ def materialize_composition(prepared: CompositionInput, dated: tuple[DatedSegmen
                             chronology: Chronology, *, checkpoints: tuple[BalanceCheckpoint, ...] = (),
                             allow_checkpoints: bool = False) -> Interpretation:
     profile, body, context = prepared.profile, prepared.candidates, prepared.context
+    if allow_checkpoints:
+        checkpoints = tuple(p for p in checkpoints if p.kind == "sparse_checkpoint" or
+            p.kind == "daily_balance" and any(r.running_balance is None for r in amounts))
     coverage = VisualCoverage(prepared.original, profile.tolerances)
     coverage.regions = (prepared.scope.region, *prepared.frames)
     for assignment in prepared.declarations:

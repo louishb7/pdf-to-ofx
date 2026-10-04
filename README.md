@@ -578,6 +578,88 @@ probe, never for deriving new layout rules. Current limits include one financial
 scope, at most two transaction monetary regions and bounded local alternatives;
 there is no broad segmentation search or automatic multi-account conversion.
 
+## M9: partial monetary role domains
+
+Monetary discovery and ownership are separate. `VisualCoverage` inventories
+original monetary occurrences before framing; `MonetaryDomain` retains the exact
+source span, existing money-region candidate and a small tuple of `FinancialRole`
+values. Producing a domain does not claim its source or supply a balance value to
+the financial context. Only an assignment in a structural hypothesis does that.
+
+The audit found two former `financial_region_unclassified` branches in the
+context operator: incomplete financial tokens inside a declaration, and financial
+content outside the transaction area with no recognized binding. These are not
+necessarily monetary ambiguity. Incomplete tokens now report
+`monetary_token_incomplete`; a valid occurrence without admissible roles reports
+`monetary_role_domain_empty`. Neither is discarded or given arbitrary roles.
+
+The deliberately narrow new domain is a complete, unqualified `Saldo` declaration
+before transactions: opening or closing balance. Both are existing roles with a
+known balance concept but an unresolved temporal boundary. An explicit opening
+or closing label remains fixed. Unknown labels, unbound summaries, arbitrary
+checkpoint/subtotal alternatives and incomplete monetary regions stay unsupported.
+Existing coupled movement/running-balance alternatives continue through their
+amount operator; selecting one column still determines exclusive ownership of
+the other. No institutional identity, document-specific phrase, score or larger
+search limit is involved.
+
+| Stage | Responsibility and uncertainty |
+| --- | --- |
+| Monetary extraction and inventory | Discover complete regions and retain original source spans |
+| Page/scope and segment operators | Reject removed financial content, unsupported boundaries or incomplete segments |
+| Context operator | Bind explicit declarations; produce the supported unqualified-balance domain; diagnose malformed or unknown content |
+| Amount/date/chronology operators | Produce existing local admissible alternatives |
+| Hypothesis engine | Enumerate assignments under the existing budget and decide material uniqueness |
+| Partial constraints | Check membership, ownership, geometry, dates and available financial relations before materialization |
+| Materialization and coverage | Claim each occurrence exactly once and verify complete field provenance |
+
+For k new unresolved balance declarations, the theoretical boundary assignment
+factor is at most 2**k, in addition to existing transaction/chronology alternatives.
+Each choice consumes the same global budget: four local alternatives and 128
+partial/complete states. Conflicting boundary declarations and available balance
+relations prune early. Exhaustion always abstains, including when a plausible
+survivor has already been visited. Eight small synthetic domains exercise global
+exhaustion without changing the budget.
+
+`hypotheses.py` now delegates frame observation, chronology possibilities,
+checkpoint construction and hard constraints. `operators/geometry.py` observes
+structure, existing chronology/financial operators supply candidates, and
+`generic/constraints.py` checks partial assignments. The engine chiefly combines
+candidates, accounts for the budget, materializes survivors and decides uniqueness.
+The legacy grammars and regression oracles remain available.
+
+`InferenceDiagnostic`, also propagated by `StatementAnalysis`, distinguishes
+`material_ambiguity`, `search_incomplete`, `capability_missing`,
+`constraint_contradiction` and `insufficient_evidence`, without changing public
+`AnalysisStatus`. Material uniqueness is checked across **all** surviving
+interpretations before minimum evidence: a stronger financial report cannot rank
+one still-plausible interpretation over another weaker one.
+
+Financial-control independence is tested permanently. `ControlInterval` refers
+to source occurrences and movement occurrences, not copied text. Reused control
+sources, circular controls, repeated/overlapping movement sources, foreign scopes
+and crossing/nested subtotal groups are rejected. Different printed controls
+covering the same movement interval confirm one interval, never increase its
+independent count. Checkpoint verification rejects reuse of one source at multiple
+boundaries and deduplicates equal boundaries; two copies of an isolated balance
+cannot manufacture a financial link. Every printed occurrence still requires its
+own monetary ownership. Hierarchical subtotal interpretation remains unsupported.
+
+```bash
+python -m pytest tests/generic/test_monetary_domains.py -q
+python -m pytest -q
+python tools/verify_m7_equivalence.py /local/first.pdf /local/second.pdf
+python -m compileall -q src
+```
+
+The new tests use only fictitious documents and include actual PDF extraction,
+application export, typed diagnostics, partial pruning, all four statuses,
+control overlap/circularity, role-order invariance and unchanged search budgets.
+A new admissible balance domain can now resolve successfully, remain materially
+ambiguous or fail all constraints. Existing M8 regression expectations remain
+unchanged. The third private document is used only as a final diagnostic probe;
+this capability is not a claim that its previous blocker was role ambiguity.
+
 ## Private documents
 
 Never commit real bank statements or upload confidential fixtures. Committed

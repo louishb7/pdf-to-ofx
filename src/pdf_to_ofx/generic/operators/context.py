@@ -9,13 +9,15 @@ from datetime import date
 from decimal import Decimal
 
 from pdf_to_ofx.domain.errors import StatementValidationError
-from pdf_to_ofx.domain.evidence import FinancialRole
+from pdf_to_ofx.domain.evidence import FinancialRole, MonetaryAssignment
+from pdf_to_ofx.generic.operators.amounts import MonetaryDomain
 from pdf_to_ofx.generic.operators.candidates import OperatorFailure, _period
 from pdf_to_ofx.generic.parser import StatementContext
 from pdf_to_ofx.generic.profile import LayoutProfile
 from pdf_to_ofx.generic.provenance import VisualCoverage
 from pdf_to_ofx.generic.semantics import balance_labels, has_financial_signal, money_regions
 from pdf_to_ofx.generic.structure import Row
+from pdf_to_ofx.validation.checkpoints import ConstraintViolation
 
 SUMMARY = {
     "saldo inicial": ("opening_balance", FinancialRole.OPENING_BALANCE),
@@ -33,11 +35,12 @@ SUMMARY = {
 
 def read_financial_context(header: tuple[Row, ...], profile: LayoutProfile,
                            supplied: StatementContext | None, coverage: VisualCoverage,
-                           ) -> tuple[StatementContext, dict[str, Decimal]]:
+                           ) -> tuple[StatementContext, dict[str, Decimal], tuple[MonetaryDomain, ...]]:
     context = supplied or StatementContext()
     declarations: dict[str, date | Decimal] = {}
     totals: dict[str, Decimal] = {}
     claimed: set[int] = set()
+    domains = []
 
     def declare(field: str, value: date | Decimal) -> None:
         target = declarations if field in StatementContext.__dataclass_fields__ else totals
@@ -55,6 +58,15 @@ def read_financial_context(header: tuple[Row, ...], profile: LayoutProfile,
             continue
         regions = money_regions(row, profile.tolerances)
         label = " ".join(w.text for w in row.words[:regions[0].start]) if regions else row.text
+        # An unqualified balance is observed, but has no declared temporal anchor.
+        # These are the only two boundary roles supported here; unknown captions
+        # do not acquire guessed roles merely because their arithmetic might fit.
+        if label.casefold().rstrip(":") == "saldo" and len(regions) == 1 and regions[0].end == len(row.words):
+            region = regions[0]
+            domains.append(MonetaryDomain(coverage.span(row, region.start, region.end), region,
+                (FinancialRole.OPENING_BALANCE, FinancialRole.CLOSING_BALANCE)))
+            claimed.add(index)
+            continue
         named = SUMMARY.get(label.casefold().rstrip(":"))
         labels = balance_labels(label) if label.casefold().startswith("saldo ") else ()
         if named is None and not labels:
@@ -88,7 +100,7 @@ def read_financial_context(header: tuple[Row, ...], profile: LayoutProfile,
         unconsumed = " ".join(w.text for i, w in enumerate(header[value_index].words) if i not in consumed)
         if has_financial_signal(unconsumed) or any(
                 w.text in {"-", "+"} for i, w in enumerate(header[value_index].words) if i not in consumed):
-            raise OperatorFailure("financial_region_unclassified", "Unclassified monetary content in a financial declaration.")
+            raise OperatorFailure("monetary_token_incomplete", "A financial declaration contains incomplete monetary tokens.")
         if regions[-1].end != len(header[value_index].words):
             raise OperatorFailure("balance_label_binding", "A financial declaration has incomplete value regions.")
         for (field, role), region in zip(bindings, regions):
@@ -96,11 +108,31 @@ def read_financial_context(header: tuple[Row, ...], profile: LayoutProfile,
                 declare(field, region.money.amount)
             coverage.monetary(header[value_index], region, role)
         claimed.update((index, value_index))
-    if any(has_financial_signal(row.text) and i not in claimed for i, row in enumerate(header)):
-        raise OperatorFailure("financial_region_unclassified", "Unclassified financial content outside the transaction area.")
+    for i, row in enumerate(header):
+        if has_financial_signal(row.text) and i not in claimed:
+            capability = "monetary_role_domain_empty" if money_regions(row, profile.tolerances) else "monetary_token_incomplete"
+            raise OperatorFailure(capability, "Financial content has no supported complete role domain.")
     context = replace(context, **declarations)
     if context.period_start is None or context.period_end is None:
         raise OperatorFailure("period_declaration_missing", "An explicit full-year statement period is required.")
     if totals.get("yield", Decimal("0.00")) != 0:
         raise OperatorFailure("summary_adjustment_undetailed", "A nonzero summary adjustment requires detailed movements.")
-    return context, totals
+    return context, totals, tuple(domains)
+
+
+def bind_context_roles(context: StatementContext, domains: tuple[MonetaryDomain, ...],
+                       assignments: tuple[MonetaryAssignment, ...]) -> StatementContext:
+    """Apply a partial assignment without guessing missing boundary values."""
+    if len(assignments) > len(domains):
+        raise ConstraintViolation("monetary_domain_membership")
+    fields = {FinancialRole.OPENING_BALANCE: "opening_balance", FinancialRole.CLOSING_BALANCE: "closing_balance"}
+    for domain, assignment in zip(domains, assignments):
+        if (assignment.source != domain.source or assignment.role not in domain.roles
+                or assignment.transaction_index is not None or assignment.role not in fields):
+            raise ConstraintViolation("monetary_domain_membership")
+        field, value = fields[assignment.role], domain.region.money.amount
+        previous = getattr(context, field)
+        if previous is not None and previous != value:
+            raise ConstraintViolation("financial_declarations")
+        context = replace(context, **{field: value})
+    return context

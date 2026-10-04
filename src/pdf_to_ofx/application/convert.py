@@ -10,7 +10,7 @@ from pdf_to_ofx.domain.errors import (
     MissingOFXRequirementsError, OFXGenerationError, PDFExtractionError,
     StatementParseError, StatementValidationError, UnsupportedLayoutError,
 )
-from pdf_to_ofx.domain.evidence import AnalysisStatus, DocumentRegion, EvidenceReport, EvidenceStatus, FinancialRole, Provenance
+from pdf_to_ofx.domain.evidence import AnalysisStatus, DocumentRegion, EvidenceReport, EvidenceStatus, FinancialRole, InferenceDiagnostic, Provenance, default_diagnostic
 from pdf_to_ofx.domain.models import BankAccount, Statement
 from pdf_to_ofx.generic.inference import infer_layout
 from pdf_to_ofx.generic.operators.candidates import OperatorFailure
@@ -34,6 +34,11 @@ class StatementAnalysis:
     error_type: type[ConversionError] | None = None
     blocking_capabilities: tuple[str, ...] = ()
     candidate_hypotheses: int = 0
+    diagnostic: InferenceDiagnostic | None = None
+
+    def __post_init__(self) -> None:
+        if self.diagnostic is None:
+            object.__setattr__(self, "diagnostic", default_diagnostic(self.status))
 
     @property
     def financial_scope(self) -> DocumentRegion | None:
@@ -98,7 +103,7 @@ def analyze_pdf(path: Path, *, layout_profile: LayoutProfile | None = None,
             return StatementAnalysis(inference.status, bank_name=name, reason=inference.reason,
                 ambiguities=(inference.reason,) if inference.status == AnalysisStatus.AMBIGUOUS else (),
                 blocking_capabilities=inference.blocking_capabilities,
-                candidate_hypotheses=inference.candidate_hypotheses)
+                candidate_hypotheses=inference.candidate_hypotheses, diagnostic=inference.diagnostic)
         assert inference.interpretation is not None
         interpretation = inference.interpretation
         layout_profile = inference.profile
@@ -115,7 +120,7 @@ def analyze_pdf(path: Path, *, layout_profile: LayoutProfile | None = None,
             reason = "Independent financial evidence or complete monetary coverage is insufficient."
             return StatementAnalysis(AnalysisStatus.AMBIGUOUS, evidence=interpretation.evidence,
                 provenance=interpretation.provenance, layout_profile=layout_profile,
-                bank_name=name, reason=reason, ambiguities=(reason,))
+                bank_name=name, reason=reason, ambiguities=(reason,), diagnostic=InferenceDiagnostic.INSUFFICIENT_EVIDENCE)
         return StatementAnalysis(AnalysisStatus.SUCCESS, interpretation.statement,
             interpretation.evidence, interpretation.provenance, layout_profile, name,
             candidate_hypotheses=inference.candidate_hypotheses)

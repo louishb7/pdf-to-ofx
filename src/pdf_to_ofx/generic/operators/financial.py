@@ -1,16 +1,62 @@
 """Available financial controls are exact constraints, never selection scores."""
 
+from __future__ import annotations
+
 from dataclasses import replace
+from datetime import date
+from typing import TYPE_CHECKING
 from decimal import Decimal
 
 from pdf_to_ofx.domain.errors import RecognizedInvalidStatementError, StatementValidationError
 from pdf_to_ofx.domain.evidence import EvidenceReport, EvidenceStatus, SourceSpan
-from pdf_to_ofx.domain.models import Chronology, Statement
+from pdf_to_ofx.domain.models import BalanceCheckpoint, Chronology, Statement
 from pdf_to_ofx.generic.operators.candidates import OperatorFailure
 from pdf_to_ofx.generic.operators.transactions import RowCandidate
 from pdf_to_ofx.generic.profile import BalanceMode
-from pdf_to_ofx.validation.checkpoints import _sum
+from pdf_to_ofx.validation.checkpoints import ConstraintViolation, _sum
 from pdf_to_ofx.validation.statement import validate_statement
+
+
+if TYPE_CHECKING:
+    from pdf_to_ofx.generic.composition import CompositionInput
+    from pdf_to_ofx.generic.hypotheses import StructuralHypothesis
+    from pdf_to_ofx.generic.provenance import VisualCoverage
+
+
+def checkpoint_candidates(prepared: CompositionInput, hypothesis: StructuralHypothesis,
+                           coverage: VisualCoverage, dates: tuple[date, ...] | None) -> tuple[BalanceCheckpoint, ...]:
+    count = len(prepared.segments)
+    points = []
+    context = prepared.context
+    for value, boundary, role in ((context.opening_balance, 0, "opening_balance"),
+                                  (context.closing_balance, count, "closing_balance")):
+        if value is not None:
+            source = next((a.source for a in prepared.declarations if a.role.value == role), None)
+            points.append(BalanceCheckpoint(boundary, value, role, source))
+    for index, (segment, roles) in enumerate(zip(hypothesis.transaction_segments, hypothesis.monetary_roles)):
+        if roles.running_balance:
+            economic = index if hypothesis.chronology == Chronology.ASCENDING else count - index - 1
+            region = roles.running_balance
+            points.append(BalanceCheckpoint(economic + 1, region.money.amount, "running_balance",
+                coverage.span(segment.rows[0].row, region.start, region.end)))
+    for candidate in prepared.candidates:
+        if candidate.kind == "checkpoint":
+            cut = sum(s.position < candidate.position for s in prepared.segments)
+            if hypothesis.chronology == Chronology.DESCENDING:
+                cut = count - cut
+            region = candidate.amounts[0]
+            points.append(BalanceCheckpoint(cut, region.money.amount, "sparse_checkpoint",
+                                            coverage.span(candidate.row, region.start, region.end)))
+        elif candidate.kind == "date_heading" and candidate.amounts and dates is not None:
+            if len(candidate.amounts) != 1:
+                raise OperatorFailure("balance_semantics_unknown", "A daily checkpoint needs one exclusive balance region.")
+            day = candidate.dates[0].value
+            if day not in dates:
+                raise ConstraintViolation("daily_checkpoint_date")
+            region = candidate.amounts[0]
+            points.append(BalanceCheckpoint(sum(d <= day for d in dates), region.money.amount, "daily_balance",
+                                            coverage.span(candidate.row, region.start, region.end)))
+    return tuple(points)
 
 
 def financial_evidence(statement: Statement, candidates: tuple[RowCandidate, ...],

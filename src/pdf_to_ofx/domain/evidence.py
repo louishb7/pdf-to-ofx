@@ -13,6 +13,22 @@ class AnalysisStatus(StrEnum):
     INVALID = "invalid"
 
 
+class InferenceDiagnostic(StrEnum):
+    MATERIAL_AMBIGUITY = "material_ambiguity"
+    SEARCH_INCOMPLETE = "search_incomplete"
+    CAPABILITY_MISSING = "capability_missing"
+    CONSTRAINT_CONTRADICTION = "constraint_contradiction"
+    INSUFFICIENT_EVIDENCE = "insufficient_evidence"
+
+
+def default_diagnostic(status: AnalysisStatus, *, budget_exhausted: bool = False) -> InferenceDiagnostic | None:
+    if budget_exhausted:
+        return InferenceDiagnostic.SEARCH_INCOMPLETE
+    return {AnalysisStatus.AMBIGUOUS: InferenceDiagnostic.MATERIAL_AMBIGUITY,
+            AnalysisStatus.UNSUPPORTED: InferenceDiagnostic.CAPABILITY_MISSING,
+            AnalysisStatus.INVALID: InferenceDiagnostic.CONSTRAINT_CONTRADICTION}.get(status)
+
+
 class EvidenceStatus(StrEnum):
     VERIFIED = "verified"
     NOT_AVAILABLE = "not_available"

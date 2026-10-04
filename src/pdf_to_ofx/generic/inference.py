@@ -11,7 +11,7 @@ from pdf_to_ofx.domain.errors import (
     AmbiguousStatementError, FinancialCoverageError, RecognizedInvalidStatementError,
     StatementParseError, StatementValidationError,
 )
-from pdf_to_ofx.domain.evidence import AnalysisStatus, Interpretation
+from pdf_to_ofx.domain.evidence import AnalysisStatus, InferenceDiagnostic, Interpretation, default_diagnostic
 from pdf_to_ofx.generic.composition import resolve_hypotheses
 from pdf_to_ofx.generic.operators.candidates import OperatorFailure
 from pdf_to_ofx.generic.parser import GenericStatementParser, StatementContext, leading_date
@@ -40,6 +40,11 @@ class InferenceResult:
     pruned_constraints: tuple[tuple[str, int], ...] = ()
     hypotheses: tuple[StructuralHypothesis, ...] = ()
     budget_exhausted: bool = False
+    diagnostic: InferenceDiagnostic | None = None
+
+    def __post_init__(self) -> None:
+        if self.diagnostic is None:
+            object.__setattr__(self, "diagnostic", default_diagnostic(self.status, budget_exhausted=self.budget_exhausted))
 
 
 def _contact_footer_rows(rows: tuple[Row, ...]) -> int:

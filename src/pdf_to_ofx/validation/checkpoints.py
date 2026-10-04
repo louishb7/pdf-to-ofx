@@ -4,6 +4,7 @@ from decimal import Context, Decimal, localcontext
 
 from pdf_to_ofx.domain.errors import RecognizedInvalidStatementError
 from pdf_to_ofx.domain.models import BalanceCheckpoint
+from pdf_to_ofx.domain.evidence import SourceSpan
 
 
 def _sum(values: list[Decimal]) -> Decimal:
@@ -25,7 +26,18 @@ def check_checkpoints(amounts: tuple[Decimal | None, ...], checkpoints: tuple[Ba
     if any(value is not None and (not isinstance(value, Decimal) or not value.is_finite()) for value in amounts):
         raise ConstraintViolation("checkpoint_domain")
     boundaries: dict[int, Decimal] = {}
+    sources = []
     for point in checkpoints:
+        if point.source is not None:
+            source = point.source
+            if not isinstance(source, SourceSpan):
+                raise ConstraintViolation("checkpoint_origin")
+            if any(s.region_id != source.region_id for s in sources):
+                raise ConstraintViolation("control_scope_or_membership")
+            if any((s.page, s.row, s.basis) == (source.page, source.row, source.basis)
+                   and s.word_start < source.word_end and source.word_start < s.word_end for s in sources):
+                raise ConstraintViolation("control_source_reused")
+            sources.append(source)
         if (type(point.after) is not int or not 0 <= point.after <= len(amounts)
                 or not isinstance(point.balance, Decimal) or not point.balance.is_finite()):
             raise ConstraintViolation("checkpoint_domain")
