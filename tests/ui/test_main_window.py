@@ -10,7 +10,7 @@ from PySide6.QtCore import QMimeData, QPoint, QPointF, Qt, QUrl
 from PySide6.QtGui import QDragEnterEvent, QDropEvent
 from PySide6.QtWidgets import QApplication
 
-from pdf_to_ofx.application.convert import convert_pdf
+from pdf_to_ofx.application.convert import analyze_pdf, convert_pdf
 from pdf_to_ofx.domain.errors import (
     ConversionError, OFXGenerationError, PDFExtractionError, StatementParseError,
     StatementValidationError, UnsupportedLayoutError,
@@ -38,12 +38,12 @@ def test_window_starts_with_no_exportable_result(window: MainWindow) -> None:
     ("synthetic_pdf", {
         "bank": "Synthetic Bank / synthetic-v1", "period": "01/09/2026 a 05/09/2026",
         "count": "4", "credits": "2", "debits": "2", "opening": "R$ 1.000,00",
-        "closing": "R$ 1.365,00", "validation": "Aprovada",
+        "closing": "R$ 1.365,00", "validation": "Abertura e fechamento reconciliados",
     }),
     ("inter_pdf", {
         "bank": "Banco Inter / inter-digital-v1", "period": "01/02/2027 a 04/02/2027",
         "count": "5", "credits": "3", "debits": "2", "opening": "Não informado pelo extrato",
-        "closing": "R$ 1.000,00", "validation": "Aprovada",
+        "closing": "R$ 1.000,00", "validation": "Saldos progressivos verificados; abertura não reconciliada",
     }),
 ])
 def test_public_conversion_summary_and_read_only_table(
@@ -79,7 +79,7 @@ def test_cancelled_selection_preserves_current_result(window: MainWindow, synthe
     window.load_pdf(synthetic_pdf)
     result = window.conversion_result
     with patch("pdf_to_ofx.ui.main_window.QFileDialog.getOpenFileName", return_value=("", "")), \
-         patch("pdf_to_ofx.ui.main_window.convert_pdf") as converter:
+         patch("pdf_to_ofx.ui.main_window.analyze_pdf") as converter:
         window.select_button.click()
     converter.assert_not_called()
     assert window.conversion_result is result
@@ -174,9 +174,9 @@ def test_old_state_is_cleared_before_pipeline_runs(window: MainWindow, synthetic
         with patch("pdf_to_ofx.ui.main_window.QFileDialog.getSaveFileName") as dialog:
             window.save_ofx()
         dialog.assert_not_called()
-        return new_result
+        return analyze_pdf(path)
 
-    with patch("pdf_to_ofx.ui.main_window.convert_pdf", side_effect=convert_after_reset):
+    with patch("pdf_to_ofx.ui.main_window.analyze_pdf", side_effect=convert_after_reset):
         window.load_pdf(inter_pdf)
     assert window.conversion_result == new_result
     assert window.save_button.isEnabled() and window.select_button.isEnabled()
@@ -213,7 +213,7 @@ def test_failure_clears_old_result_and_never_exposes_exception_text(
     error_type: type[Exception], expected: str, capsys: pytest.CaptureFixture,
 ) -> None:
     window.load_pdf(synthetic_pdf)
-    with patch("pdf_to_ofx.ui.main_window.convert_pdf", side_effect=error_type("SENSITIVE TEST TEXT")):
+    with patch("pdf_to_ofx.ui.main_window.analyze_pdf", side_effect=error_type("SENSITIVE TEST TEXT")):
         window.load_pdf(inter_pdf)
     assert window.conversion_result is None
     assert window.selected_file is None
@@ -246,7 +246,7 @@ def test_invalid_file_clears_previous_result_before_core_is_called(
     elif kind == "directory":
         path = tmp_path / "directory.pdf"
         path.mkdir()
-    with patch("pdf_to_ofx.ui.main_window.convert_pdf") as converter:
+    with patch("pdf_to_ofx.ui.main_window.analyze_pdf") as converter:
         window.load_pdf(path)
     converter.assert_not_called()
     assert window.conversion_result is None
@@ -314,7 +314,7 @@ def test_remote_multiple_and_non_pdf_drops_are_ignored(window: MainWindow, urls:
                             mime, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
     drop = QDropEvent(QPointF(10, 10), Qt.DropAction.CopyAction,
                       mime, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
-    with patch("pdf_to_ofx.ui.main_window.convert_pdf") as converter:
+    with patch("pdf_to_ofx.ui.main_window.analyze_pdf") as converter:
         window.dragEnterEvent(enter)
         window.dropEvent(drop)
     assert not enter.isAccepted() and not drop.isAccepted()

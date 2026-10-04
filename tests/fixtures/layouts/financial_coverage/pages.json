@@ -1,0 +1,11 @@
+{
+  "pages": [[
+    {"y": 40, "cells": [[35, "EXTRATO FICTÍCIO: COBERTURA FINANCEIRA"]]},
+    {"y": 60, "cells": [[35, "Período: 01/03/2027 a 03/03/2027"]]},
+    {"y": 80, "cells": [[35, "Saldo inicial: R$ 100,00"]]},
+    {"y": 100, "cells": [[35, "Saldo final: R$ 105,00"]]},
+    {"y": 140, "cells": [[35, "01/03/2027 CRÉDITO FICTÍCIO +R$ 20,00"]]},
+    {"y": 160, "cells": [[35, "02/03/2027 DÉBITO FICTÍCIO -R$ 20,00"]]},
+    {"y": 180, "cells": [[35, "03/03/2027 CRÉDITO FINAL +R$ 5,00"]]}
+  ]]
+}

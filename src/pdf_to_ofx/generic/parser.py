@@ -6,8 +6,12 @@ from decimal import Decimal
 from itertools import groupby
 import re
 
-from pdf_to_ofx.domain.errors import StatementParseError, StatementValidationError
-from pdf_to_ofx.domain.models import BankAccount, Statement, Transaction
+from pdf_to_ofx.domain.errors import (
+    RecognizedInvalidStatementError, StatementParseError, StatementValidationError,
+)
+from pdf_to_ofx.domain.evidence import EvidenceStatus, FinancialRole, Interpretation, SourceSpan
+from pdf_to_ofx.domain.models import BankAccount, Chronology, Statement, Transaction
+from pdf_to_ofx.generic.provenance import VisualCoverage
 from pdf_to_ofx.generic.profile import AmountMode, BalanceMode, DateMode, LayoutProfile
 from pdf_to_ofx.generic.semantics import (
     LONG_DATE, NUMERIC_DATE, SHORT_MONTH_DATE, balance_labels, has_financial_signal, money_regions, parse_date,
@@ -35,7 +39,7 @@ class StatementContext:
     closing_balance: Decimal | None = None
 
     def __post_init__(self) -> None:
-        if (not isinstance(self.bank_id, str) or not self.bank_id.strip()
+        if (not isinstance(self.bank_id, str)
                 or (self.account is not None and not isinstance(self.account, BankAccount))):
             raise StatementValidationError("Invalid explicit statement identity context.")
         if any(value is not None and type(value) is not date for value in (self.period_start, self.period_end)):
@@ -73,7 +77,7 @@ def strip_footers(rows: tuple[Row, ...], profile: LayoutProfile) -> tuple[Row, .
 
 
 def read_context(header: tuple[Row, ...], profile: LayoutProfile,
-                 supplied: StatementContext | None) -> StatementContext:
+                 supplied: StatementContext | None, coverage: VisualCoverage) -> StatementContext:
     context = supplied or StatementContext()
     declarations: dict[str, date | Decimal] = {}
     claimed: set[int] = set()
@@ -115,8 +119,13 @@ def read_context(header: tuple[Row, ...], profile: LayoutProfile,
         for label, region in zip(labels, regions):
             if label in {"inicial", "anterior"}:
                 declare("opening_balance", region.money.amount)
+                role = FinancialRole.OPENING_BALANCE
             elif label in {"final", "total"}:
                 declare("closing_balance", region.money.amount)
+                role = FinancialRole.CLOSING_BALANCE
+            else:
+                role = FinancialRole.BALANCE_COMPONENT
+            coverage.monetary(header[value_row], region, role)
     for index, row in enumerate(header):
         if has_financial_signal(row.text) and index not in claimed:
             raise StatementParseError("Unclassified financial content precedes the transaction area.")
@@ -131,39 +140,49 @@ class GenericStatementParser:
 
     def parse(self, document: ExtractedDocument, profile: LayoutProfile,
               *, context: StatementContext | None = None) -> Statement:
+        return self.interpret(document, profile, context=context).statement
+
+    def interpret(self, document: ExtractedDocument, profile: LayoutProfile,
+                  *, context: StatementContext | None = None) -> Interpretation:
         if profile.amount_mode == AmountMode.GROUP_SUBTOTAL:
             # Import locally to keep the existing row grammar independent of
             # the additional structural family, without a bank parser registry.
-            from pdf_to_ofx.generic.grouped import parse_grouped_subtotals
-            return parse_grouped_subtotals(document, profile, context=context)
-        rows = strip_footers(reconstruct_rows(document, profile.tolerances), profile)
+            from pdf_to_ofx.generic.grouped import interpret_grouped_subtotals
+            return interpret_grouped_subtotals(document, profile, context=context)
+        original = reconstruct_rows(document, profile.tolerances)
+        coverage = VisualCoverage(original, profile.tolerances)
+        rows = strip_footers(original, profile)
         start = next((index for index, row in enumerate(rows) if leading_date(row) is not None), None)
         if start is None:
             raise StatementParseError("No dated transaction area was found.")
-        context = read_context(rows[:start], profile, context)
+        context = read_context(rows[:start], profile, context, coverage)
         transactions: list[Transaction] = []
         current_date: date | None = None
         daily_balance: Decimal | None = None
         group_start = 0
         previous_page = rows[start].page
+        date_source: SourceSpan | None = None
+        daily_checks: list[bool] = []
 
         def check_group() -> None:
             if profile.date_mode == DateMode.GROUPED and current_date is not None:
                 if len(transactions) == group_start:
                     raise StatementParseError("A date group contains no transactions.")
-                if daily_balance is not None and transactions[-1].balance_after != daily_balance:
-                    raise StatementValidationError("Daily closing balance differs from its last transaction.")
+                if daily_balance is not None:
+                    daily_checks.append(transactions[-1].balance_after == daily_balance)
 
         for row in rows[start:]:
             if row.page != previous_page and not profile.carry_date_across_pages:
                 check_group()
                 current_date = None
+                date_source = None
             previous_page = row.page
             dated = leading_date(row)
             regions = money_regions(row, profile.tolerances)
             if profile.date_mode == DateMode.GROUPED and dated:
                 check_group()
                 current_date, date_end = dated
+                date_source = coverage.span(row, 0, date_end)
                 group_start = len(transactions)
                 remainder = " ".join(word.text for word in row.words[date_end:])
                 if not remainder:
@@ -180,12 +199,14 @@ class GenericStatementParser:
                     if any(w.text.strip(":").casefold() not in captions for w in row.words[regions[0].end:]):
                         raise StatementParseError("Unclassified trailing content in date-group heading.")
                     daily_balance = regions[0].money.amount
+                    coverage.monetary(row, regions[0], FinancialRole.DAILY_BALANCE)
                 continue
             date_end = 0
             if profile.date_mode == DateMode.PER_TRANSACTION:
                 if dated is None:
                     raise StatementParseError("Every transaction requires its own date.")
                 current_date, date_end = dated
+                date_source = coverage.span(row, 0, date_end)
             if current_date is None:
                 raise StatementParseError("A transaction has no date context.")
             expected = 2 if profile.balance_mode == BalanceMode.RUNNING else 1
@@ -203,6 +224,12 @@ class GenericStatementParser:
                     or (profile.amount_mode == AmountMode.CREDIT_DEBIT_MARKER and movement.marker is None)):
                 raise StatementParseError("Transaction direction does not match the structural profile.")
             balance = regions[profile.balance_column].money.amount if profile.balance_column is not None else None
+            index = len(transactions)
+            coverage.monetary(row, regions[profile.movement_column], FinancialRole.MOVEMENT, index)
+            if profile.balance_column is not None:
+                coverage.monetary(row, regions[profile.balance_column], FinancialRole.RUNNING_BALANCE, index)
+            assert date_source is not None
+            coverage.transaction(date_source, coverage.span(row))
             transactions.append(Transaction(current_date, description, movement.amount, balance))
         check_group()
         statement = Statement(
@@ -210,6 +237,19 @@ class GenericStatementParser:
             period_start=context.period_start, period_end=context.period_end,
             opening_balance=context.opening_balance, closing_balance=context.closing_balance,
             transactions=tuple(transactions), account=context.account,
+            chronology=Chronology.ASCENDING,
+            running_balances_required=profile.balance_mode == BalanceMode.RUNNING,
         )
-        validate_statement(statement)
-        return statement
+        try:
+            evidence = validate_statement(statement)
+            if not all(daily_checks):
+                raise StatementValidationError("Daily closing balance differs from its last transaction.")
+        except StatementValidationError as error:
+            raise RecognizedInvalidStatementError(str(error)) from error
+        evidence = replace(evidence,
+            running_balance_verified=evidence.running_balance_verified if profile.balance_mode == BalanceMode.RUNNING
+                else EvidenceStatus.NOT_APPLICABLE,
+            group_subtotals_verified=EvidenceStatus.NOT_APPLICABLE,
+            daily_balances_verified=EvidenceStatus.VERIFIED if daily_checks else EvidenceStatus.NOT_AVAILABLE,
+        )
+        return coverage.finish(statement, evidence)

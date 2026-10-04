@@ -11,7 +11,9 @@ from datetime import date
 from decimal import Decimal
 from xml.etree import ElementTree as ET
 
-from pdf_to_ofx.domain.errors import OFXGenerationError
+from pdf_to_ofx.domain.errors import (
+    MissingOFXMetadataError, MissingOFXRequirementsError, OFXGenerationError,
+)
 from pdf_to_ofx.domain.models import BankAccount, Statement, Transaction
 from pdf_to_ofx.validation.statement import validate_statement
 
@@ -43,7 +45,7 @@ class OFXProfile:
 _SYNTHETIC_PROFILE = OFXProfile(bank_id="000", account_id="SYNTHETIC-DEMO")
 
 
-def _account_profile(account: BankAccount) -> OFXProfile:
+def account_profile(account: BankAccount) -> OFXProfile:
     return OFXProfile(
         bank_id=account.bank_id, account_id=account.account_id,
         account_type=account.account_type, branch_id=account.branch_id,
@@ -59,18 +61,22 @@ def _resolve_profile(statement: Statement, profile: OFXProfile | None) -> OFXPro
     synthetic = statement.bank_id == "synthetic" and statement.layout_id == "synthetic-v1"
     if profile is None:
         if statement.account is not None:
-            profile = _account_profile(statement.account)
+            profile = account_profile(statement.account)
         elif synthetic:
             profile = _SYNTHETIC_PROFILE
         else:
-            raise OFXGenerationError("Real-bank export requires explicit account metadata.")
+            raise MissingOFXMetadataError("Real-bank export requires explicit account metadata.")
     if not isinstance(profile, OFXProfile):
         raise OFXGenerationError("Invalid OFX export profile.")
     for value in (profile.bank_id, profile.account_id, profile.account_type, profile.currency):
+        if value is None or isinstance(value, str) and not value.strip():
+            raise MissingOFXMetadataError("Required OFX profile metadata is absent.")
         _check_text(value)
     real_bank = not synthetic
     for value in (profile.branch_id, profile.organization, profile.institution_id):
         if real_bank or value is not None:
+            if value is None or isinstance(value, str) and not value.strip():
+                raise MissingOFXMetadataError("Required OFX institution or account metadata is absent.")
             _check_text(value)
     if (profile.organization is None) != (profile.institution_id is None):
         raise OFXGenerationError("OFX institution name and ID must be provided together.")
@@ -81,7 +87,7 @@ def _resolve_profile(statement: Statement, profile: OFXProfile | None) -> OFXPro
                 or profile.institution_id.strip() == "000"
                 or profile.organization.strip().casefold() == "synthetic bank"):
             raise OFXGenerationError("Synthetic account metadata cannot be used for a real bank.")
-        if statement.account is not None and profile != _account_profile(statement.account):
+        if statement.account is not None and profile != account_profile(statement.account):
             raise OFXGenerationError("Export profile contradicts the statement account metadata.")
     return profile
 
@@ -123,8 +129,8 @@ def _identity(statement: Statement, transaction: Transaction, profile: OFXProfil
     )
 
 
-def generate_ofx(statement: Statement, profile: OFXProfile | None = None) -> str:
-    # Direct callers receive the same safety gate as the application pipeline.
+def validate_ofx_export(statement: Statement, profile: OFXProfile | None = None) -> OFXProfile:
+    """Assess actual generator requirements without creating an OFX payload."""
     validate_statement(statement)
     profile = _resolve_profile(statement, profile)
     if profile.account_type not in {"CHECKING", "SAVINGS"}:
@@ -133,9 +139,15 @@ def generate_ofx(statement: Statement, profile: OFXProfile | None = None) -> str
             or not profile.currency.isalpha() or not profile.currency.isupper()):
         raise OFXGenerationError("OFX currency must be a three-letter uppercase code.")
     if statement.closing_balance is None:
-        raise OFXGenerationError("The provisional OFX profile requires a closing balance.")
+        raise MissingOFXRequirementsError("The provisional OFX profile requires a closing balance.")
     for transaction in statement.transactions:
         _check_text(transaction.description)
+    return profile
+
+
+def generate_ofx(statement: Statement, profile: OFXProfile | None = None) -> str:
+    # Direct callers receive the same safety gate as the application pipeline.
+    profile = validate_ofx_export(statement, profile)
 
     root = ET.Element("OFX")
     signon = ET.SubElement(ET.SubElement(root, "SIGNONMSGSRSV1"), "SONRS")
@@ -168,7 +180,7 @@ def generate_ofx(statement: Statement, profile: OFXProfile | None = None) -> str
     _add(transaction_list, "DTEND", _date(statement.period_end))
     occurrences: Counter[str] = Counter()
     used_ids: set[str] = set()
-    # Validate source order and running balances BEFORE sorting for export.
+    # Validate declared economic order and available balances BEFORE sorting.
     # Same-day ties use description then signed amount, never incidental input
     # order. Identical exported transactions use stable occurrence numbers.
     transactions = sorted(statement.transactions, key=lambda transaction: (

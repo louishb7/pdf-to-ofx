@@ -11,12 +11,16 @@ from PySide6.QtWidgets import (
     QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
-from pdf_to_ofx.application.convert import ConversionResult, convert_pdf
+from pdf_to_ofx.application.convert import (
+    ConversionResult, ExportReadiness, ExportStatus, StatementAnalysis,
+    analyze_pdf, assess_export_readiness, export_analysis,
+)
 from pdf_to_ofx.application.export import write_ofx
 from pdf_to_ofx.domain.errors import (
     OFXGenerationError, PDFExtractionError, StatementParseError,
     StatementValidationError, UnsupportedLayoutError,
 )
+from pdf_to_ofx.domain.evidence import AnalysisStatus, EvidenceStatus
 
 
 def format_money(value: Decimal | None) -> str:
@@ -50,6 +54,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.selected_file: Path | None = None
         self.conversion_result: ConversionResult | None = None
+        self.analysis: StatementAnalysis | None = None
+        self.export_readiness: ExportReadiness | None = None
         self.setWindowTitle("PDF para OFX")
         self.resize(1000, 720)
         self.setMinimumSize(760, 580)
@@ -137,6 +143,8 @@ class MainWindow(QMainWindow):
         # paths. A failed second conversion cannot export the previous OFX.
         self.selected_file = None
         self.conversion_result = None
+        self.analysis = None
+        self.export_readiness = None
         self.save_button.setEnabled(False)
         self.file_label.setText("Nenhum PDF selecionado.")
         self.table.clearContents()
@@ -162,13 +170,38 @@ class MainWindow(QMainWindow):
             if path.suffix.lower() != ".pdf" or not path.is_file():
                 self._error("Selecione um arquivo existente com extensão .pdf.")
                 return
-            result = convert_pdf(path)
-            self._show_result(result)
+            analysis = analyze_pdf(path)
+            self.analysis = analysis
+            if analysis.status != AnalysisStatus.SUCCESS:
+                messages = {
+                    AnalysisStatus.AMBIGUOUS: "Não foi possível determinar uma interpretação única para este extrato.",
+                    AnalysisStatus.UNSUPPORTED: "Este formato ainda não é suportado.",
+                    AnalysisStatus.INVALID: "O extrato foi reconhecido, mas seus dados não passaram na validação. Há uma inconsistência que impede a conversão.",
+                }
+                message = messages[analysis.status]
+                if analysis.error_type is PDFExtractionError:
+                    message = conversion_error_message(PDFExtractionError())
+                self._error(message)
+                return
+            self._show_result(analysis)
             self.selected_file = path
-            self.conversion_result = result
             self.file_label.setText(path.name)
-            self.save_button.setEnabled(True)
-            self.status_label.setText("Conversão concluída. Revise os lançamentos e escolha Salvar OFX.")
+            self.export_readiness = assess_export_readiness(analysis)
+            if self.export_readiness.status == ExportStatus.EXPORT_METADATA_REQUIRED:
+                self.status_label.setText("Extrato interpretado. São necessários dados bancários adicionais para gerar o OFX.")
+            elif self.export_readiness.status != ExportStatus.READY_TO_EXPORT:
+                self.status_label.setText("Extrato interpretado. Faltam requisitos válidos para exportar, como o saldo final ou dados bancários consistentes.")
+            else:
+                try:
+                    ofx = export_analysis(analysis)
+                except OFXGenerationError:
+                    self.export_readiness = ExportReadiness(ExportStatus.EXPORT_REQUIREMENTS_MISSING, ("generation_failed",))
+                    self._error("Extrato interpretado, mas não foi possível gerar o OFX com segurança.")
+                    return
+                assert analysis.statement is not None
+                self.conversion_result = ConversionResult(analysis.bank_name, analysis.statement, ofx)
+                self.save_button.setEnabled(True)
+                self.status_label.setText("Conversão pronta. Revise os lançamentos e escolha Salvar OFX.")
         except Exception as error:
             self._clear_result()
             self._error(conversion_error_message(error))
@@ -176,8 +209,14 @@ class MainWindow(QMainWindow):
             self.select_button.setEnabled(True)
             self.unsetCursor()
 
-    def _show_result(self, result: ConversionResult) -> None:
+    def _show_result(self, result: StatementAnalysis) -> None:
         statement = result.statement
+        assert statement is not None
+        evidence = result.evidence
+        validation = ("Abertura e fechamento reconciliados" if evidence.opening_closing_reconciled == EvidenceStatus.VERIFIED
+                      else "Saldos progressivos verificados; abertura não reconciliada")
+        if evidence.group_subtotals_verified == EvidenceStatus.VERIFIED:
+            validation += "; subtotais verificados"
         values = {
             "bank": f"{result.bank_name} / {statement.layout_id}",
             "period": f"{statement.period_start:%d/%m/%Y} a {statement.period_end:%d/%m/%Y}",
@@ -186,7 +225,7 @@ class MainWindow(QMainWindow):
             "debits": str(sum(t.amount < 0 for t in statement.transactions)),
             "opening": format_money(statement.opening_balance),
             "closing": format_money(statement.closing_balance),
-            "validation": "Aprovada",
+            "validation": validation,
         }
         for key, value in values.items():
             self.summary_labels[key].setText(value)
@@ -208,7 +247,10 @@ class MainWindow(QMainWindow):
 
     def save_ofx(self) -> None:
         # Guard the action itself, rather than relying only on the button state.
-        if self.conversion_result is None or self.selected_file is None:
+        if (self.conversion_result is None or self.selected_file is None
+                or self.analysis is None or self.analysis.status != AnalysisStatus.SUCCESS
+                or self.export_readiness is None
+                or self.export_readiness.status != ExportStatus.READY_TO_EXPORT):
             return
         filename, _ = QFileDialog.getSaveFileName(
             self, "Salvar OFX · escolha um nome novo", str(self.selected_file.with_suffix(".ofx")),

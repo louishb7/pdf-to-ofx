@@ -3,6 +3,7 @@
 from typing import Protocol
 
 from pdf_to_ofx.domain.models import Statement
+from pdf_to_ofx.domain.evidence import Interpretation
 from pdf_to_ofx.pdf.document import ExtractedDocument
 
 
@@ -11,3 +12,5 @@ class BankParser(Protocol):
     layout_id: str
 
     def parse(self, document: ExtractedDocument) -> Statement: ...
+
+    def interpret(self, document: ExtractedDocument) -> Interpretation: ...

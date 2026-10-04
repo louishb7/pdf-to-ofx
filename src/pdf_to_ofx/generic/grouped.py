@@ -10,8 +10,12 @@ from decimal import Context, Decimal, localcontext
 from itertools import groupby
 import re
 
-from pdf_to_ofx.domain.errors import StatementParseError, StatementValidationError
-from pdf_to_ofx.domain.models import Statement, Transaction
+from pdf_to_ofx.domain.errors import (
+    RecognizedInvalidStatementError, StatementParseError, StatementValidationError,
+)
+from pdf_to_ofx.domain.evidence import EvidenceStatus, FinancialRole, Interpretation, SourceSpan
+from pdf_to_ofx.domain.models import Chronology, Statement, Transaction
+from pdf_to_ofx.generic.provenance import VisualCoverage
 from pdf_to_ofx.generic.parser import PERIOD, StatementContext, leading_date
 from pdf_to_ofx.generic.profile import AmountMode, BalanceMode, DateMode, LayoutProfile
 from pdf_to_ofx.generic.semantics import (
@@ -120,7 +124,7 @@ def _frame(rows: tuple[Row, ...], profile: LayoutProfile) -> tuple[Row, ...]:
 
 
 def _context(header: tuple[Row, ...], profile: LayoutProfile,
-             supplied: StatementContext | None) -> tuple[StatementContext, dict[str, Decimal]]:
+             supplied: StatementContext | None, coverage: VisualCoverage) -> tuple[StatementContext, dict[str, Decimal]]:
     context = supplied or StatementContext()
     declarations: dict[str, date | Decimal] = {}
     totals: dict[str, Decimal] = {}
@@ -166,6 +170,14 @@ def _context(header: tuple[Row, ...], profile: LayoutProfile,
                 or regions[0].money.marker is not None):
             raise StatementParseError("A summary requires one complete monetary value.")
         declare(role, regions[0].money.amount)
+        financial_role = {
+            "opening_balance": FinancialRole.OPENING_BALANCE,
+            "closing_balance": FinancialRole.CLOSING_BALANCE,
+            "credits": FinancialRole.CREDIT_TOTAL,
+            "debits": FinancialRole.DEBIT_TOTAL,
+            "yield": FinancialRole.SUMMARY_ADJUSTMENT,
+        }[role]
+        coverage.monetary(header[value_index], regions[0], financial_role)
         claimed.update((index, value_index))
     if any(has_financial_signal(row.text) and i not in claimed for i, row in enumerate(header)):
         raise StatementParseError("Unclassified financial content in the statement summary.")
@@ -180,17 +192,27 @@ def _context(header: tuple[Row, ...], profile: LayoutProfile,
 
 def parse_grouped_subtotals(document: ExtractedDocument, profile: LayoutProfile,
                            *, context: StatementContext | None = None) -> Statement:
-    rows = _frame(reconstruct_rows(document, profile.tolerances), profile)
+    return interpret_grouped_subtotals(document, profile, context=context).statement
+
+
+def interpret_grouped_subtotals(document: ExtractedDocument, profile: LayoutProfile,
+                                *, context: StatementContext | None = None) -> Interpretation:
+    original = reconstruct_rows(document, profile.tolerances)
+    coverage = VisualCoverage(original, profile.tolerances)
+    rows = _frame(original, profile)
     start = next((i for i, row in enumerate(rows) if not _period(row) and leading_date(row)), None)
     if start is None:
         raise StatementParseError("No dated flow group was found.")
-    context, totals = _context(rows[:start], profile, context)
+    context, totals = _context(rows[:start], profile, context, coverage)
     transactions: list[Transaction] = []
     current_date: date | None = None
     expected: Decimal | None = None
     direction: int | None = None
     group_start = 0
     previous_page = rows[start].page
+    date_source: SourceSpan | None = None
+    flow_source: SourceSpan | None = None
+    subtotal_checks: list[bool] = []
     numeric_regions = [r for row in rows[start:] for r in money_regions(row, profile.tolerances)]
     if not numeric_regions:
         raise StatementParseError("Dated flows contain no monetary regions.")
@@ -199,19 +221,20 @@ def parse_grouped_subtotals(document: ExtractedDocument, profile: LayoutProfile,
     def check_group() -> None:
         if expected is not None:
             amounts = [t.amount for t in transactions[group_start:]]
-            if not amounts or _sum(amounts) != expected:
-                raise StatementValidationError("Transactions do not reconcile with their declared flow subtotal.")
+            subtotal_checks.append(bool(amounts) and _sum(amounts) == expected)
 
     for row in rows[start:]:
         if row.page != previous_page and not profile.carry_date_across_pages:
             check_group()
             current_date = direction = expected = None
+            date_source = flow_source = None
         previous_page = row.page
         dated = leading_date(row)
         flow = _flow(row, profile.tolerances)
         if dated:
             check_group()
             current_date = dated[0]
+            date_source = coverage.span(row, 0, dated[1])
             expected = direction = None
             if flow is None and dated[1] != len(row.words):
                 raise StatementParseError("Date headings require a complete declared flow subtotal.")
@@ -221,6 +244,9 @@ def parse_grouped_subtotals(document: ExtractedDocument, profile: LayoutProfile,
             if current_date is None:
                 raise StatementParseError("A flow subtotal has no date context.")
             expected, direction = flow
+            region = money_regions(row, profile.tolerances)[0]
+            coverage.monetary(row, region, FinancialRole.SUBTOTAL)
+            flow_source = coverage.span(row)
             group_start = len(transactions)
             continue
         if dated:
@@ -238,6 +264,9 @@ def parse_grouped_subtotals(document: ExtractedDocument, profile: LayoutProfile,
             if has_financial_signal(description):
                 raise StatementParseError("Unclassified monetary content in the transaction description.")
             amount = region.money.amount if direction == 1 else region.money.amount.copy_negate()
+            coverage.monetary(row, region, FinancialRole.MOVEMENT, len(transactions))
+            assert date_source is not None and flow_source is not None
+            coverage.transaction(date_source, flow_source, coverage.span(row))
             transactions.append(Transaction(current_date, description, amount))
         else:
             if (not transactions or len(transactions) == group_start or has_financial_signal(row.text)
@@ -246,16 +275,28 @@ def parse_grouped_subtotals(document: ExtractedDocument, profile: LayoutProfile,
                     or row.words[-1].x1 >= value_left):
                 raise StatementParseError("Unclassified or orphan transaction continuation.")
             transactions[-1] = replace(transactions[-1], description=transactions[-1].description + " " + row.text)
+            coverage.continuation(coverage.span(row))
     check_group()
     credits = _sum([t.amount for t in transactions if t.amount >= 0])
     debits = _sum([t.amount for t in transactions if t.amount < 0])
-    if (totals.get("credits", credits) != credits or totals.get("debits", debits) != debits):
-        raise StatementValidationError("Transactions differ from declared statement credit/debit totals.")
     statement = Statement(context.bank_id, "generic-structural-v1", context.period_start,
                           context.period_end, context.opening_balance, context.closing_balance,
-                          tuple(transactions), context.account)
-    validate_statement(statement)
-    return statement
+                          tuple(transactions), context.account, chronology=Chronology.ASCENDING)
+    try:
+        if not all(subtotal_checks):
+            raise StatementValidationError("Transactions do not reconcile with their declared flow subtotal.")
+        if (totals.get("credits", credits) != credits or totals.get("debits", debits) != debits):
+            raise StatementValidationError("Transactions differ from declared statement credit/debit totals.")
+        evidence = validate_statement(statement)
+    except StatementValidationError as error:
+        raise RecognizedInvalidStatementError(str(error)) from error
+    evidence = replace(evidence,
+        running_balance_verified=EvidenceStatus.NOT_APPLICABLE,
+        group_subtotals_verified=EvidenceStatus.VERIFIED,
+        credit_total_verified=EvidenceStatus.VERIFIED if "credits" in totals else EvidenceStatus.NOT_AVAILABLE,
+        debit_total_verified=EvidenceStatus.VERIFIED if "debits" in totals else EvidenceStatus.NOT_AVAILABLE,
+    )
+    return coverage.finish(statement, evidence)
 
 
 def infer_grouped_profile(rows: tuple[Row, ...], tolerances: Tolerances) -> LayoutProfile | None:

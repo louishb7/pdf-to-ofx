@@ -98,7 +98,7 @@ def test_insufficient_structure_is_unsupported(document):
 
 def test_one_row_without_arithmetic_evidence_is_not_inferred(make_document):
     document = make_document("Período: 01/03/2027 a 03/03/2027\nSaldo final: R$ 100,01\n01/03/2027 ALFA R$ 0,01 R$ 100,01")
-    assert infer_layout(document).status == InferenceStatus.UNSUPPORTED
+    assert infer_layout(document).status == InferenceStatus.AMBIGUOUS
 
 
 @pytest.mark.parametrize(("old", "new"), [
@@ -108,7 +108,8 @@ def test_one_row_without_arithmetic_evidence_is_not_inferred(make_document):
     ("02/03/2027 DÉBITO", "31/02/2027 DÉBITO"),
 ])
 def test_invalid_financial_rows_never_form_a_valid_inference(make_document, old, new):
-    assert infer_layout(make_document((HEADER + BODY).replace(old, new))).status == InferenceStatus.UNSUPPORTED
+    expected = InferenceStatus.INVALID if new in {"-R$ 0,02", "R$ 100,02\n", "Saldo final: R$ 100,02"} else InferenceStatus.UNSUPPORTED
+    assert infer_layout(make_document((HEADER + BODY).replace(old, new))).status == expected
 
 
 def test_explicit_profile_also_rejects_financial_inconsistency(make_document):
@@ -138,7 +139,7 @@ def test_absent_balance_requires_full_reconciliation_for_inference(make_document
     assert result.status == InferenceStatus.SUCCESS and result.profile is not None
     assert result.profile.balance_mode == BalanceMode.ABSENT
     without_opening = make_document((HEADER + "01/03/2027 ALFA R$ 0,02\n02/03/2027 BETA -R$ 0,01").replace("Saldo inicial: R$ 100,00\n", ""))
-    assert infer_layout(without_opening).status == InferenceStatus.UNSUPPORTED
+    assert infer_layout(without_opening).status == InferenceStatus.AMBIGUOUS
 
 
 def test_duplicate_descriptions_and_amounts_are_preserved(make_document):
@@ -273,7 +274,7 @@ def test_unparsed_currency_cannot_be_silently_omitted_in_balances(make_document,
 @pytest.mark.parametrize("fields", [
     {"opening_balance": 100.0}, {"opening_balance": Decimal("NaN")},
     {"closing_balance": Decimal("Infinity")}, {"account": "INVALID"},
-    {"period_start": "01/03/2027"}, {"bank_id": ""},
+    {"period_start": "01/03/2027"}, {"bank_id": 123},
 ])
 def test_context_is_validated_before_document_declarations_can_replace_invalid_input(fields):
     with pytest.raises(StatementValidationError):

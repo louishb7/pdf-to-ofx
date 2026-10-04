@@ -5,7 +5,7 @@ statements and uses OFX in its Athenas workflow. Financial document contents are
 processed locally, without external services, APIs, telemetry, or persistence
 beyond the requested output file.
 
-## Current status: M0 through M5 — Generic Statement Engine validation
+## Current status: M0 through M6 — Traceable analysis and independent OFX readiness
 
 M0 proves a synthetic PDF → normalized statement → validation → OFX pipeline.
 M1 adds initial support for the **investigated Banco Inter digital layout**,
@@ -27,6 +27,10 @@ movements inside explicitly signed flow subtotals, wrapped descriptions across
 pages and conservative handling of recurring document frames. Interpretation
 and financial proof use the PDF alone; an official OFX is an optional external
 acceptance reference, never an input required by the engine.
+M6 separates approved interpretation from OFX export readiness. It adds immutable
+financial evidence and index-only provenance, checks monetary coverage in the
+existing grammars, and keeps interpreted statements visible in the GUI when
+account metadata is missing. It adds no new layout family.
 
 **Compatibilidade com Athenas ainda não validada.** The provisional OFX 1.02
 profile uses fictitious account metadata (`000` / `SYNTHETIC-DEMO`) only for the
@@ -72,7 +76,8 @@ python -m pdf_to_ofx.ui
 2. Review the bank/layout, period, counts, balances and validation result.
 3. Review the read-only transaction table. Amounts use Brazilian formatting
    only in the interface; financial domain values remain exact `Decimal` values.
-4. Click **Salvar OFX** and choose a new destination using the system dialog.
+4. If export requirements are satisfied, click **Salvar OFX** and choose a new
+   destination using the system dialog.
    The suggested filename follows the PDF name; existing files are refused.
 
 OFX contents remain in memory until saving is requested. Opening a new PDF clears
@@ -80,6 +85,10 @@ the previous result immediately, including after a failed conversion; an old OFX
 cannot remain exportable. Cancelling a dialog makes no changes. Missing balances
 are displayed as **Não informado pelo extrato**. Conversion failures appear in
 Portuguese without document contents or tracebacks.
+An approved interpretation without account metadata keeps its summary and table
+visible, with **Salvar OFX** disabled and a message explaining the missing data.
+The validation summary distinguishes opening/closing reconciliation from a
+verified running-balance chain whose opening balance was not supplied.
 
 The GUI and CLI call the same application services. Processing is local and
 does not send statements over the internet. There is no conversion history,
@@ -132,11 +141,13 @@ by the automated suite.
 
 ## Architecture
 
-`application.convert.convert_pdf(Path(...))` is the GUI-independent entry point:
+`application.convert.analyze_pdf(Path(...))` is the GUI-independent analysis API.
+`convert_pdf` remains the CLI convenience wrapper for analysis plus export:
 
 ```text
-Local PDF → extracted pages → deterministic layout detection → layout parser
-          → immutable Statement/Transaction → validation → provisional OFX
+Local PDF → extracted pages → historical grammar or generic structural inference
+          → interpretation + source ownership → financial evidence
+          → approved Statement → independent OFX readiness → provisional OFX
 ```
 
 Bank parsers receive our own document model. Extraction preserves both page text
@@ -146,7 +157,11 @@ values; monetary values continue to use `Decimal` exclusively.
 The OFX generator receives domain
 values and also validates direct callers. Monetary values use `Decimal`, positive
 for credits and negative for debits, with exact cent reconciliation. Normalized
-transactions retain document order for balance validation; export sorts a copy.
+transactions retain document order. Parsers explicitly declare when that order
+is ascending economic order; the central validator does not infer it from the
+bank identity. Sparse running checkpoints can be validated without inventing
+missing balances, while the existing running-balance profile still requires all
+its source balances. Export sorts a copy.
 Unsupported text is rejected rather than ignored.
 
 Inter preserves the balance after each transaction and checks every adjacent
@@ -163,7 +178,8 @@ temporary file and a hard link in the destination directory. Filesystems without
 hard-link support fail explicitly; output permissions are owner-only on POSIX.
 
 The `ui/` package owns only the window, presentation and desktop entry points.
-It calls `application.convert.convert_pdf` and `application.export.write_ofx`;
+It calls `analyze_pdf`, `assess_export_readiness`, `export_analysis` and
+`application.export.write_ofx`;
 bank parsing, PDF extraction, financial validation and OFX generation remain in
 the existing core. The transaction table follows document order for reviewing
 running balances, while the export retains M2's canonical ordering.
@@ -198,11 +214,17 @@ columns, since some PDFs position amounts immediately after variable description
 Inference enumerates the supported date/amount/balance modes and possible
 movement/balance assignments. A hypothesis must consume every body row and pass
 `validate_statement`, including each exact running-balance link and declared
-daily/statement balances. One successful hypothesis yields `success`; multiple
-yield `ambiguous`; none yields `unsupported`. Without an opening balance, at
+daily/statement balances. A materially unique supported interpretation with
+coverage and sufficient financial evidence yields `success`; remaining
+ambiguity or insufficient evidence yields `ambiguous`; unidentified structures
+yield `unsupported`; identified financial contradictions yield `invalid`.
+Equivalent profile syntax with identical financial output, evidence and source
+ownership does not introduce material ambiguity. Without an opening balance, at
 least two running-balance transactions are required for automatic inference.
 Absent-balance inference requires independent opening/closing reconciliation.
-Explicit profiles can interpret less evidence, but cannot bypass validation.
+Explicit profiles can produce a valid domain model with less evidence, but
+application analysis will not approve it for export without the same minimum
+financial-evidence and coverage policy.
 
 Generic period and balance metadata are read from exact Portuguese financial
 labels, separately from the profile. A statement period must be declared or
@@ -240,6 +262,60 @@ default parsing attempts generic inference. Supplying sufficient explicit
 identity allows generic conversion without registering another bank parser.
 The fictitious OFX fallback is restricted to the original Synthetic Bank layout,
 including when a generic context contains the reserved test marker.
+
+### Analysis, evidence and export readiness
+
+`StatementAnalysis` distinguishes `SUCCESS`, `AMBIGUOUS`, `UNSUPPORTED` and
+`INVALID`. Failure states have no approved Statement. Identity in legacy
+`StatementContext` never selects the parser or changes analysis/evidence;
+`parse_pdf` attaches that identity only after analysis for compatibility.
+The historical Inter grammar remains the default baseline for its recognized
+header, while an explicit structural profile uses the generic engine.
+
+```python
+from pathlib import Path
+from pdf_to_ofx.application.convert import (
+    ExportStatus, analyze_pdf, assess_export_readiness, export_analysis,
+)
+from pdf_to_ofx.domain.evidence import AnalysisStatus
+
+analysis = analyze_pdf(Path("extrato.pdf"))
+if analysis.status == AnalysisStatus.SUCCESS:
+    statement = analysis.statement  # reviewable, even without account identity
+    readiness = assess_export_readiness(analysis)
+    if readiness.status == ExportStatus.READY_TO_EXPORT:
+        ofx = export_analysis(analysis)  # in memory; no automatic output file
+```
+
+The readiness/export APIs also accept explicit `BankAccount` or `OFXProfile`
+metadata, independently of interpretation. Missing identity yields
+`EXPORT_METADATA_REQUIRED`; missing closing balance or invalid/conflicting
+export requirements yields `EXPORT_REQUIREMENTS_MISSING`. Unapproved analysis
+yields `EXPORT_BLOCKED`. A complete profile yields `READY_TO_EXPORT`; the
+generator still detects failures such as FITID collisions at generation time.
+Metadata cannot override conflicting identity already extracted from the PDF.
+No metadata-entry form has been added.
+
+`EvidenceReport` records domain validity, declared economic order, verified
+running links (including whether the first movement had an opening reference),
+opening/closing reconciliation, group subtotals, credit/debit totals, daily
+balances and financial coverage. Each verification is `verified`,
+`not_available` or `not_applicable`; absence is not a failed check. A
+contradiction instead prevents approval. The current minimum acceptance policy
+requires independent opening/closing reconciliation or at least one verified
+running-balance link, together with complete supported monetary coverage.
+
+`Provenance` holds page/row/word indexes, not duplicate raw text. Generic sources
+reference visual rows reconstructed before frame removal; historical parsers
+explicitly reference nonblank text lines. Date/flow context and continuation
+rows remain associated with each transaction occurrence, including duplicates.
+The ephemeral coverage ledger inventories monetary regions before candidate
+selection, and each must receive a recognized role: movement, balance,
+subtotal, total or an explicitly recognized summary component/adjustment.
+There is no arbitrary ignore role. The coverage guarantee is limited to the
+existing supported grammars and their financial-token recognition, not all PDFs.
+The fictitious `financial_coverage` recipe proves that omitting cancelling
+`+20` and `-20` cannot pass merely because `100 + 5 = 105` still reconciles.
 
 Public structural fixtures in `tests/fixtures/layouts/` contain only fictitious
 positioned cells. Tests generate reproducible PDFs for grouped dates plus signed
@@ -289,14 +365,32 @@ CLI uses this same encoding. Dates use `YYYYMMDD`, without invented times or
 timezones; `DTSERVER` and `DTASOF` use the statement end date.
 
 Export order is ascending calendar date, then description (Unicode lexical
-order), then signed amount. Source chronology and running balances must pass
-validation before sorting; invalid source order is still rejected. FITIDs use
+order), then signed amount. Declared source chronology and available running
+controls must pass validation before sorting; contradictions in that declared
+order are rejected. FITIDs use
 SHA-256 of normalized transaction/account identity plus an occurrence number
 for identical duplicates. Duplicate transactions remain present with unique,
 stable IDs; an identifier collision fails explicitly. Sorting does not change
 transaction identity. Monetary values have two decimal places; signed zero is
 canonicalized to `0.00`, including in FITID identity. Identical normalized inputs
 produce identical bytes without randomness or current-time dependencies.
+
+The existing FITID policy also includes `Statement.bank_id` and `layout_id`.
+Changing only the parser namespace can therefore change identifiers for identical
+financial transactions and cause duplicate imports downstream. M6 adds a
+regression demonstrating this risk and **does not change the algorithm**.
+For a recognized historical layout, supplying identity context no longer
+implicitly selects the generic parser. Callers that previously relied on that
+behavior must pass their previous structural profile explicitly to retain that
+parser namespace and its legacy FITIDs. Default CLI/GUI exports retain the
+historical namespaces.
+A separate migration milestone should define a versioned policy based on
+stable account identity and normalized transactions, retain occurrence numbers
+for legitimate duplicates, and verify specific/generic equivalence and collision
+handling. It must preserve the legacy policy for previously exported accounts
+until an explicit migration strategy and an actual downstream reimport test
+establish how old/new identifiers are reconciled. No implicit migration or
+automatic history persistence is introduced here.
 
 `CREDIT` represents nonnegative amounts (including neutral zero), and `DEBIT`
 represents negative amounts. The generic model cannot distinguish a payment

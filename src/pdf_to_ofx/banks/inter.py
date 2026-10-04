@@ -5,12 +5,17 @@ Only known header/footer roles are ignored; every body line is accounted for.
 """
 
 import re
+from dataclasses import replace
 from datetime import date, datetime
 from decimal import Decimal
 
 from pdf_to_ofx.domain.errors import StatementParseError, StatementValidationError
-from pdf_to_ofx.domain.models import BankAccount, Statement, Transaction
+from pdf_to_ofx.domain.evidence import EvidenceStatus, FinancialRole, Interpretation
+from pdf_to_ofx.domain.models import BankAccount, Chronology, Statement, Transaction
 from pdf_to_ofx.pdf.document import ExtractedDocument
+from pdf_to_ofx.pdf.provenance import text_lines, text_span
+from pdf_to_ofx.validation.coverage import CoverageLedger
+from pdf_to_ofx.validation.statement import validate_statement
 
 DATE = r"[0-9]{2}/[0-9]{2}/[0-9]{4}"
 NUMBER = r"(?:0|[1-9][0-9]{0,2}(?:\.[0-9]{3})*|[1-9][0-9]*),[0-9]{2}"
@@ -137,6 +142,7 @@ class InterParser:
             bank_id="inter", layout_id=self.layout_id,
             period_start=_calendar_date(period[1]), period_end=_calendar_date(period[2]),
             opening_balance=None, closing_balance=closing, transactions=tuple(transactions),
+            chronology=Chronology.ASCENDING, running_balances_required=True,
             account=BankAccount(
                 organization="Banco Inter", institution_id="077", bank_id="077",
                 # In this profile BRANCHID retains its check-digit separator;
@@ -145,3 +151,34 @@ class InterParser:
                 account_id=account_match[2].replace("-", ""),
             ),
         )
+
+    def interpret(self, document: ExtractedDocument) -> Interpretation:
+        """Keep the proven grammar; add index-only sources for its known roles."""
+        statement = self.parse(document)
+        lines = text_lines(document)
+        money = re.compile(rf"{MONEY}|{NUMBER}")
+        expected = tuple(text_span(page, row, text, match.start(), match.end())
+                         for page, row, text in lines for match in money.finditer(text))
+        coverage = CoverageLedger(expected)
+        date_source = None
+        transaction_index = 0
+        for page, row, text in lines:
+            regions = list(money.finditer(text))
+            if page == document.pages[0].number and row == 6:
+                for index, region in enumerate(regions):
+                    coverage.claim(text_span(page, row, text, region.start(), region.end()),
+                                   FinancialRole.CLOSING_BALANCE if index == 0 else FinancialRole.BALANCE_COMPONENT)
+            elif (day := DAY.fullmatch(text)) is not None:
+                date_source = text_span(page, row, text, 0, text.index(" Saldo"))
+                region = regions[0]
+                coverage.claim(text_span(page, row, text, region.start(), region.end()), FinancialRole.DAILY_BALANCE)
+            elif (movement := MOVEMENT.fullmatch(text)) is not None:
+                for group, role in ((2, FinancialRole.MOVEMENT), (3, FinancialRole.RUNNING_BALANCE)):
+                    coverage.claim(text_span(page, row, text, *movement.span(group)), role, transaction_index)
+                assert date_source is not None
+                coverage.transaction(date_source, text_span(page, row, text))
+                transaction_index += 1
+        evidence = replace(validate_statement(statement),
+                           daily_balances_verified=EvidenceStatus.VERIFIED,
+                           group_subtotals_verified=EvidenceStatus.NOT_APPLICABLE)
+        return coverage.finish(statement, evidence)

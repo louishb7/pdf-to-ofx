@@ -41,3 +41,17 @@ def layout_pdf(request, write_layout_pdf, tmp_path):
     output = tmp_path / "statement.pdf"
     write_layout_pdf(LAYOUTS / request.param / "pages.json", output)
     return output
+
+
+@pytest.fixture
+def grouped_pdf(write_layout_pdf, tmp_path):
+    output = tmp_path / "grouped.pdf"
+    write_layout_pdf(LAYOUTS / "grouped_subtotals_wrapped/pages.json", output)
+    return output
+
+
+@pytest.fixture
+def coverage_pdf(write_layout_pdf, tmp_path):
+    output = tmp_path / "coverage.pdf"
+    write_layout_pdf(LAYOUTS / "financial_coverage/pages.json", output)
+    return output

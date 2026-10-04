@@ -27,7 +27,7 @@ def test_balance_mismatch_fails(statement: Statement) -> None:
 
 @pytest.mark.parametrize("changes", [
     {"transactions": ()}, {"period_start": date(2026, 10, 1)},
-    {"period_end": "05/09/2026"}, {"bank_id": ""}, {"layout_id": None},
+    {"period_end": "05/09/2026"}, {"layout_id": None},
     {"opening_balance": Decimal("NaN")}, {"closing_balance": Decimal("Infinity")},
     {"opening_balance": 1000}, {"closing_balance": Decimal("1365.001")},
 ])
@@ -77,3 +77,7 @@ def test_large_values_reconcile_exactly(statement: Statement) -> None:
 
 def test_trailing_decimal_zeros_do_not_invalidate_cents(statement: Statement) -> None:
     validate_statement(replace(statement, closing_balance=Decimal("1365.0000")))
+
+
+def test_absent_bank_identity_does_not_affect_financial_validity(statement: Statement) -> None:
+    assert validate_statement(replace(statement, bank_id="", account=None)) == validate_statement(statement)

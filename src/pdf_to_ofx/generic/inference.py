@@ -1,11 +1,14 @@
 """Enumerate small structural hypotheses; accept only a unique validated one."""
 
-from dataclasses import dataclass
-from enum import StrEnum
+from dataclasses import dataclass, replace
 from itertools import groupby
 import re
 
-from pdf_to_ofx.domain.errors import StatementParseError, StatementValidationError
+from pdf_to_ofx.domain.errors import (
+    FinancialCoverageError, RecognizedInvalidStatementError,
+    StatementParseError, StatementValidationError,
+)
+from pdf_to_ofx.domain.evidence import AnalysisStatus, Interpretation
 from pdf_to_ofx.generic.parser import GenericStatementParser, StatementContext, leading_date
 from pdf_to_ofx.generic.profile import AmountMode, BalanceMode, DateMode, LayoutProfile
 from pdf_to_ofx.generic.semantics import has_financial_signal
@@ -13,10 +16,7 @@ from pdf_to_ofx.generic.structure import Row, Tolerances, reconstruct_rows
 from pdf_to_ofx.pdf.document import ExtractedDocument
 
 
-class InferenceStatus(StrEnum):
-    SUCCESS = "success"
-    UNSUPPORTED = "unsupported"
-    AMBIGUOUS = "ambiguous"
+InferenceStatus = AnalysisStatus
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,6 +24,7 @@ class InferenceResult:
     status: InferenceStatus
     profile: LayoutProfile | None
     reason: str
+    interpretation: Interpretation | None = None
 
 
 def _contact_footer_rows(rows: tuple[Row, ...]) -> int:
@@ -48,13 +49,32 @@ def _contact_footer_rows(rows: tuple[Row, ...]) -> int:
 
 def infer_layout(document: ExtractedDocument, *, context: StatementContext | None = None,
                  tolerances: Tolerances = Tolerances()) -> InferenceResult:
+    if context is not None:
+        # Identity can neither select a grammar nor change financial acceptance.
+        context = replace(context, bank_id="unknown", account=None)
     try:
         rows = reconstruct_rows(document, tolerances)
         footer_rows = _contact_footer_rows(rows)
     except StatementParseError:
         return InferenceResult(InferenceStatus.UNSUPPORTED, None, "Ordered positioned words are required.")
-    accepted = []
+    accepted: list[tuple[LayoutProfile, Interpretation]] = []
+    invalid = False
+    insufficient = False
     parser = GenericStatementParser()
+
+    def try_profile(profile: LayoutProfile) -> None:
+        nonlocal invalid, insufficient
+        try:
+            interpretation = parser.interpret(document, profile, context=context)
+        except (RecognizedInvalidStatementError, FinancialCoverageError):
+            invalid = True
+        except (StatementParseError, StatementValidationError):
+            pass
+        else:
+            if interpretation.evidence.has_financial_support:
+                accepted.append((profile, interpretation))
+            else:
+                insufficient = True
     for date_mode in DateMode:
         for amount_mode in AmountMode:
             if amount_mode == AmountMode.GROUP_SUBTOTAL:
@@ -67,31 +87,27 @@ def infer_layout(document: ExtractedDocument, *, context: StatementContext | Non
                         carry_date_across_pages=date_mode == DateMode.GROUPED,
                         footer_rows=footer_rows, tolerances=tolerances,
                     )
-                    try:
-                        statement = parser.parse(document, profile, context=context)
-                    except (StatementParseError, StatementValidationError):
-                        continue
-                    # One row without an opening balance has no arithmetic link.
-                    # Absent-balance schemas need independent full reconciliation.
-                    if balance_mode == BalanceMode.RUNNING:
-                        if len(statement.transactions) < 2 and statement.opening_balance is None:
-                            continue
-                    elif statement.opening_balance is None or statement.closing_balance is None:
-                        continue
-                    accepted.append(profile)
+                    try_profile(profile)
     from pdf_to_ofx.generic.grouped import infer_grouped_profile
     grouped = infer_grouped_profile(rows, tolerances)
     if grouped is not None:
-        try:
-            statement = parser.parse(document, grouped, context=context)
-        except (StatementParseError, StatementValidationError):
-            pass
-        else:
-            # This family requires independently declared opening/closing
-            # balances and reconciles every signed subtotal in the PDF.
-            accepted.append(grouped)
-    if len(accepted) == 1:
-        return InferenceResult(InferenceStatus.SUCCESS, accepted[0], "A unique schema passed structural and exact financial validation.")
-    if len(accepted) > 1:
-        return InferenceResult(InferenceStatus.AMBIGUOUS, None, "Movement and balance roles cannot be distinguished uniquely.")
+        try_profile(grouped)
+    # Different profile syntax is not material ambiguity when financial output,
+    # evidence and ownership are identical. Identity is excluded from this key.
+    unique = {}
+    for profile, interpretation in accepted:
+        statement = interpretation.statement
+        key = (statement.period_start, statement.period_end, statement.opening_balance,
+               statement.closing_balance, statement.transactions,
+               interpretation.evidence, interpretation.provenance)
+        unique.setdefault(key, (profile, interpretation))
+    if len(unique) == 1:
+        profile, interpretation = next(iter(unique.values()))
+        return InferenceResult(InferenceStatus.SUCCESS, profile, "A unique interpretation passed coverage and financial evidence policy.", interpretation)
+    if len(unique) > 1:
+        return InferenceResult(InferenceStatus.AMBIGUOUS, None, "Material financial interpretations cannot be distinguished uniquely.")
+    if insufficient:
+        return InferenceResult(InferenceStatus.AMBIGUOUS, None, "The document lacks independent financial evidence for safe acceptance.")
+    if invalid:
+        return InferenceResult(InferenceStatus.INVALID, None, "A consumed structural hypothesis contains inconsistent financial data or incomplete coverage.")
     return InferenceResult(InferenceStatus.UNSUPPORTED, None, "No schema passed structural and exact financial validation with sufficient evidence.")

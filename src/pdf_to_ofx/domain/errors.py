@@ -21,5 +21,25 @@ class StatementValidationError(ConversionError):
     """Normalized financial data failed validation."""
 
 
+class RecognizedInvalidStatementError(StatementValidationError):
+    """A fully consumed structural hypothesis failed financial validation."""
+
+
+class FinancialCoverageError(StatementParseError):
+    """Document monetary regions have missing, duplicate or invalid ownership."""
+
+
+class AmbiguousStatementError(ConversionError):
+    """Interpretation or financial evidence cannot determine a safe result."""
+
+
 class OFXGenerationError(ConversionError):
     """The provisional OFX profile cannot represent the supplied data."""
+
+
+class MissingOFXMetadataError(OFXGenerationError):
+    """Explicit bank/account metadata is incomplete."""
+
+
+class MissingOFXRequirementsError(OFXGenerationError):
+    """A non-identity requirement of the export format is unavailable."""

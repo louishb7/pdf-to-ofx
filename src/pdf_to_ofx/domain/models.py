@@ -3,6 +3,12 @@
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
+from enum import StrEnum
+
+
+class Chronology(StrEnum):
+    UNDECLARED = "undeclared"
+    ASCENDING = "ascending"
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,3 +39,7 @@ class Statement:
     closing_balance: Decimal | None
     transactions: tuple[Transaction, ...]
     account: BankAccount | None = None
+    # Transactions retain document order. Only a parser's explicit declaration
+    # allows that sequence to be used as economic order for balance links.
+    chronology: Chronology = Chronology.UNDECLARED
+    running_balances_required: bool = False

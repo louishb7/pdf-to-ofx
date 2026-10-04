@@ -21,7 +21,9 @@ def test_generic_statement_without_account_cannot_export_old_gui_result(
     window.load_pdf(document)
     assert window.conversion_result is None
     assert not window.save_button.isEnabled()
-    assert window.table.rowCount() == 0
+    assert window.table.rowCount() == 2
+    assert window.analysis is not None
+    assert window.summary_labels["count"].text() == "2"
     assert "dados bancários" in window.status_label.text()
     with patch("pdf_to_ofx.ui.main_window.QFileDialog.getSaveFileName") as dialog:
         window.save_ofx()

@@ -117,3 +117,16 @@ def test_low_decimal_precision_does_not_round_export(statement: Statement) -> No
         assert [element.text for element in body(generate_ofx(statement)).findall(".//TRNAMT")] == [
             "500.00", "-35.00", "-200.00", "100.00",
         ]
+
+
+@pytest.mark.parametrize("changes", [{"bank_id": "other-identity"}, {"layout_id": "other-parser"}])
+def test_legacy_fitids_change_with_parser_identity_despite_identical_financial_data(ofx_reference_statement, changes):
+    # Document the existing v1 risk; changing parsers must not silently migrate
+    # identifier policy. M6 deliberately preserves the previous algorithm.
+    original = generate_ofx(ofx_reference_statement)
+    changed = generate_ofx(replace(ofx_reference_statement, **changes))
+    first, second = body(original), body(changed)
+    assert [n.text for n in first.findall(".//FITID")] != [n.text for n in second.findall(".//FITID")]
+    for tag in ("DTPOSTED", "TRNAMT", "MEMO"):
+        assert [n.text for n in first.findall(".//" + tag)] == [n.text for n in second.findall(".//" + tag)]
+    assert changed == generate_ofx(replace(ofx_reference_statement, **changes))

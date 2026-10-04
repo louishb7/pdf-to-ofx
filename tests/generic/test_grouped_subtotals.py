@@ -110,7 +110,8 @@ def test_weak_or_inconsistent_flow_hypotheses_are_rejected(changed_document, bef
                 for cell in row["cells"]:
                     if cell[1] == before:
                         cell[1] = after
-    assert infer_layout(changed_document(change)).status == InferenceStatus.UNSUPPORTED
+    expected = InferenceStatus.INVALID if after in {"+21,00", "-14,00", "9,99"} else InferenceStatus.UNSUPPORTED
+    assert infer_layout(changed_document(change)).status == expected
 
 
 def test_explicit_profile_cannot_bypass_a_subtotal_mismatch(flow_pdf, changed_document):

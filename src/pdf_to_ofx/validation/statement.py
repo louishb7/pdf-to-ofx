@@ -4,7 +4,8 @@ from datetime import date
 from decimal import Context, Decimal, localcontext
 
 from pdf_to_ofx.domain.errors import StatementValidationError
-from pdf_to_ofx.domain.models import Statement, Transaction
+from pdf_to_ofx.domain.evidence import EvidenceReport, EvidenceStatus
+from pdf_to_ofx.domain.models import Chronology, Statement, Transaction
 
 
 def _validate_money(value: Decimal, field: str) -> None:
@@ -15,19 +16,21 @@ def _validate_money(value: Decimal, field: str) -> None:
         raise StatementValidationError(f"{field} must have exact cent precision.")
 
 
-def validate_statement(statement: Statement) -> None:
+def validate_domain(statement: Statement) -> None:
+    """Validate normalized values without assuming a document chronology."""
     if not isinstance(statement, Statement):
         raise StatementValidationError("Expected a normalized Statement.")
-    if any(not isinstance(value, str) or not value.strip()
-           for value in (statement.bank_id, statement.layout_id)):
-        raise StatementValidationError("Statement bank and layout are required.")
+    if not isinstance(statement.layout_id, str) or not statement.layout_id.strip():
+        raise StatementValidationError("Statement structural layout is required.")
     if type(statement.period_start) is not date or type(statement.period_end) is not date:
         raise StatementValidationError("Statement period must contain calendar dates.")
     if statement.period_start > statement.period_end:
         raise StatementValidationError("Statement period is reversed.")
     if not isinstance(statement.transactions, tuple) or not statement.transactions:
         raise StatementValidationError("Statement must contain an immutable transaction list.")
-    previous_date = statement.period_start
+    if (not isinstance(statement.chronology, Chronology)
+            or type(statement.running_balances_required) is not bool):
+        raise StatementValidationError("Invalid structural validation declarations.")
     for index, transaction in enumerate(statement.transactions, start=1):
         if not isinstance(transaction, Transaction):
             raise StatementValidationError(f"Transaction {index} is not a Transaction.")
@@ -35,9 +38,6 @@ def validate_statement(statement: Statement) -> None:
             raise StatementValidationError(f"Transaction {index} has an invalid date.")
         if not statement.period_start <= transaction.posting_date <= statement.period_end:
             raise StatementValidationError(f"Transaction {index} falls outside the period.")
-        if transaction.posting_date < previous_date:
-            raise StatementValidationError("Transactions must be in posting-date order.")
-        previous_date = transaction.posting_date
         if not isinstance(transaction.description, str) or not transaction.description.strip():
             raise StatementValidationError(f"Transaction {index} has no description.")
         _validate_money(transaction.amount, f"Transaction {index} amount")
@@ -47,10 +47,23 @@ def validate_statement(statement: Statement) -> None:
                          (statement.closing_balance, "Closing balance")):
         if value is not None:
             _validate_money(value, label)
-    has_running_balances = any(t.balance_after is not None for t in statement.transactions)
-    if has_running_balances or statement.bank_id == "inter":
-        if any(t.balance_after is None for t in statement.transactions):
-            raise StatementValidationError("Running balances must cover every transaction.")
+
+
+def validate_statement(statement: Statement) -> EvidenceReport:
+    """Check available financial evidence; unavailable controls are not failures.
+
+    A parser may declare its current ascending document sequence as economic
+    order and require complete running balances. Neither depends on identity.
+    Sparse checkpoints reconcile the movements between them; they do not invent
+    balances for transactions which lack a source balance.
+    """
+    validate_domain(statement)
+    ordered = statement.chronology == Chronology.ASCENDING
+    if ordered and any(a.posting_date > b.posting_date
+                       for a, b in zip(statement.transactions, statement.transactions[1:])):
+        raise StatementValidationError("Declared economic order disagrees with posting-date order.")
+    if statement.running_balances_required and any(t.balance_after is None for t in statement.transactions):
+        raise StatementValidationError("The structural profile requires running balances for every transaction.")
     values = [t.amount for t in statement.transactions]
     values.extend(t.balance_after for t in statement.transactions if t.balance_after is not None)
     values.extend(v for v in (statement.opening_balance, statement.closing_balance) if v is not None)
@@ -59,14 +72,25 @@ def validate_statement(statement: Statement) -> None:
         value.as_tuple().exponent for value in values
     ) + len(str(len(values))) + 2
     with localcontext(Context(prec=max(28, precision))):
-        if has_running_balances:
+        links = 0
+        first_verified = False
+        if ordered:
             previous_balance = statement.opening_balance
+            pending = Decimal("0.00")
             for index, transaction in enumerate(statement.transactions, start=1):
-                if (previous_balance is not None
-                        and previous_balance + transaction.amount != transaction.balance_after):
-                    raise StatementValidationError(f"Running balance mismatch at transaction {index}.")
+                pending += transaction.amount
+                if transaction.balance_after is None:
+                    continue
+                if previous_balance is not None:
+                    if previous_balance + pending != transaction.balance_after:
+                        raise StatementValidationError(f"Running balance mismatch at transaction {index}.")
+                    links += 1
+                    first_verified |= index == 1 and statement.opening_balance is not None
                 previous_balance = transaction.balance_after
-            if statement.closing_balance is not None and previous_balance != statement.closing_balance:
+                pending = Decimal("0.00")
+            if (any(t.balance_after is not None for t in statement.transactions)
+                    and previous_balance is not None and statement.closing_balance is not None
+                    and previous_balance + pending != statement.closing_balance):
                 raise StatementValidationError("Last running balance differs from closing balance.")
         if statement.opening_balance is not None and statement.closing_balance is not None:
             expected = statement.opening_balance + sum(
@@ -76,3 +100,13 @@ def validate_statement(statement: Statement) -> None:
                 raise StatementValidationError(
                     "Opening balance plus transactions differs from closing balance."
                 )
+    verified = EvidenceStatus.VERIFIED
+    unavailable = EvidenceStatus.NOT_AVAILABLE
+    return EvidenceReport(
+        domain_valid=True, economic_order_verified=verified if ordered else unavailable,
+        running_balance_verified=verified if links else unavailable,
+        running_balance_links=links,
+        first_movement_verified=verified if first_verified else unavailable,
+        opening_closing_reconciled=verified if statement.opening_balance is not None
+            and statement.closing_balance is not None else unavailable,
+    )
