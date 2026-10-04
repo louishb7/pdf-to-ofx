@@ -1,0 +1,2 @@
+# Preserve PDF fixtures as binary files; do not normalize their line endings.
+*.pdf binary
