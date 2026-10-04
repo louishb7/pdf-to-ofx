@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Offline PDF bank statement to OFX conversion core"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = ["pdfplumber>=0.11,<0.12"]
+dependencies = ["pdfplumber>=0.11,<0.12", "PySide6>=6.8,<7"]
 
 [project.optional-dependencies]
 # Pin the fixture writer to keep generated PDF bytes reproducible.
@@ -16,6 +16,7 @@ test = ["pytest>=8,<10", "reportlab==4.5.1"]
 
 [project.scripts]
 pdf-to-ofx = "pdf_to_ofx.cli:main"
+pdf-to-ofx-gui = "pdf_to_ofx.ui.application:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

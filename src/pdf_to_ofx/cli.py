@@ -3,22 +3,10 @@
 import argparse
 import sys
 from pathlib import Path
-from tempfile import NamedTemporaryFile
 
 from pdf_to_ofx.application.convert import convert_pdf
+from pdf_to_ofx.application.export import write_ofx as _write_output
 from pdf_to_ofx.domain.errors import ConversionError
-
-
-def _write_output(output: Path, contents: str) -> None:
-    # Publish a complete file atomically, without overwriting an existing path.
-    # The temporary file also defaults to owner-only permissions on POSIX.
-    with NamedTemporaryFile(dir=output.parent, prefix=".pdf-to-ofx-", delete=False) as file:
-        temporary = Path(file.name)
-    try:
-        temporary.write_text(contents, encoding="ascii", newline="\n")
-        output.hardlink_to(temporary)
-    finally:
-        temporary.unlink(missing_ok=True)
 
 
 def main(argv: list[str] | None = None) -> int:
