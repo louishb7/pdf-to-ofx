@@ -18,6 +18,8 @@ class ExtractedPage:
     number: int
     text: str
     words: tuple[Word, ...] = ()
+    width: float | None = None
+    height: float | None = None
 
 
 @dataclass(frozen=True, slots=True)

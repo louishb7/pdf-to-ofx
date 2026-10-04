@@ -62,9 +62,11 @@ class LayoutProfile:
                     or self.transaction_left is None
                     or (self.continuation_left is not None and self.transaction_left >= self.continuation_left)):
                 raise ValueError("Grouped subtotals require grouped dates, absent balances and ordered description boundaries.")
-        elif (self.transaction_left is not None or self.continuation_left is not None
-              or self.repeated_header_rows or self.trailing_note_rows):
-            raise ValueError("Description/frame options currently require grouped subtotals.")
+        if self.continuation_left is not None and (
+                self.transaction_left is None or self.transaction_left >= self.continuation_left):
+            raise ValueError("Continuation requires ordered description boundaries.")
+        if self.trailing_note_rows and self.transaction_left is None:
+            raise ValueError("Trailing notes require an explicit transaction boundary.")
 
     def to_json(self) -> str:
         return json.dumps({"version": 1, **asdict(self)}, ensure_ascii=True, sort_keys=True)

@@ -177,6 +177,13 @@ class InterParser:
                     coverage.claim(text_span(page, row, text, *movement.span(group)), role, transaction_index)
                 assert date_source is not None
                 coverage.transaction(date_source, text_span(page, row, text))
+                coverage.field_sources(transaction_index, date=date_source,
+                    description=(text_span(page, row, text, *movement.span(1)),),
+                    amount=text_span(page, row, text, *movement.span(2)),
+                    balance=text_span(page, row, text, *movement.span(3)),
+                    direction=text_span(page, row, text, *movement.span(2)),
+                    direction_basis="explicit_sign" if movement[2].startswith("-") else "unsigned_credit_convention",
+                    economic_order=transaction_index)
                 transaction_index += 1
         evidence = replace(validate_statement(statement),
                            daily_balances_verified=EvidenceStatus.VERIFIED,

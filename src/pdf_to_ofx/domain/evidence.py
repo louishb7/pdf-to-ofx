@@ -60,11 +60,13 @@ class SourceSpan:
     word_start: int
     word_end: int
     basis: str = "visual_row"
+    region_id: str = "main"
 
     def __post_init__(self) -> None:
         if (any(type(value) is not int for value in (self.page, self.row, self.word_start, self.word_end))
                 or self.page < 1 or self.row < 1 or self.word_start < 0 or self.word_end <= self.word_start
-                or self.basis not in {"visual_row", "text_line"}):
+                or self.basis not in {"visual_row", "text_line"}
+                or not isinstance(self.region_id, str) or not self.region_id):
             raise ValueError("Invalid document source indexes.")
 
 
@@ -79,6 +81,7 @@ class FinancialRole(StrEnum):
     DEBIT_TOTAL = "debit_total"
     BALANCE_COMPONENT = "balance_component"
     SUMMARY_ADJUSTMENT = "summary_adjustment"
+    OTHER_FINANCIAL_CONTROL = "other_financial_control"
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,12 +95,43 @@ class MonetaryAssignment:
 class TransactionSource:
     transaction_index: int
     spans: tuple[SourceSpan, ...]
+    date_source: SourceSpan | None = None
+    description_sources: tuple[SourceSpan, ...] = ()
+    amount_source: SourceSpan | None = None
+    balance_source: SourceSpan | None = None
+    direction_source: SourceSpan | None = None
+    direction_basis: str | None = None
+    document_order: int | None = None
+    economic_order: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentRegion:
+    """A classified scope or frame, containing references rather than text."""
+    region_id: str
+    kind: str
+    spans: tuple[SourceSpan, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ChronologySource:
+    document_order: tuple[int, ...]
+    economic_order: tuple[int, ...] | None
+    basis: str
+    date_sources: tuple[SourceSpan, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
 class Provenance:
     transactions: tuple[TransactionSource, ...] = ()
     monetary_regions: tuple[MonetaryAssignment, ...] = ()
+    regions: tuple[DocumentRegion, ...] = ()
+    chronology: ChronologySource | None = None
+
+    @property
+    def financial_scope(self) -> DocumentRegion | None:
+        financial = [region for region in self.regions if region.kind == "financial"]
+        return financial[0] if len(financial) == 1 else None
 
 
 @dataclass(frozen=True, slots=True)

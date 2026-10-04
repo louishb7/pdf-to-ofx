@@ -138,6 +138,11 @@ def read_context(header: tuple[Row, ...], profile: LayoutProfile,
 class GenericStatementParser:
     layout_id = "generic-structural-v1"
 
+    def interpret_composed(self, document: ExtractedDocument, profile: LayoutProfile,
+                           *, context: StatementContext | None = None) -> Interpretation:
+        from pdf_to_ofx.generic.composition import interpret_composed
+        return interpret_composed(document, profile, context=context)
+
     def parse(self, document: ExtractedDocument, profile: LayoutProfile,
               *, context: StatementContext | None = None) -> Statement:
         return self.interpret(document, profile, context=context).statement
@@ -230,6 +235,15 @@ class GenericStatementParser:
                 coverage.monetary(row, regions[profile.balance_column], FinancialRole.RUNNING_BALANCE, index)
             assert date_source is not None
             coverage.transaction(date_source, coverage.span(row))
+            movement_region = regions[profile.movement_column]
+            balance_region = regions[profile.balance_column] if profile.balance_column is not None else None
+            coverage.field_sources(index, date=date_source,
+                description=(coverage.span(row, date_end, regions[0].start),),
+                amount=coverage.span(row, movement_region.start, movement_region.end),
+                balance=coverage.span(row, balance_region.start, balance_region.end) if balance_region else None,
+                direction=coverage.span(row, movement_region.start, movement_region.end),
+                direction_basis="direction_marker" if movement.marker else "explicit_sign" if movement.explicit_sign else "unsigned_credit_convention",
+                economic_order=index)
             transactions.append(Transaction(current_date, description, movement.amount, balance))
         check_group()
         statement = Statement(

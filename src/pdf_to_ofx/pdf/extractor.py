@@ -24,7 +24,7 @@ def extract_pdf(path: Path) -> ExtractedDocument:
                     text=word["text"], x0=word["x0"], x1=word["x1"],
                     top=word["top"], bottom=word["bottom"], page=number,
                 ) for word in page.extract_words())
-                pages.append(ExtractedPage(number, text, words))
+                pages.append(ExtractedPage(number, text, words, page.width, page.height))
             return ExtractedDocument(tuple(pages))
     except PDFExtractionError:
         raise

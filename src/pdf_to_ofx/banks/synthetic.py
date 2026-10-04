@@ -105,6 +105,11 @@ class SyntheticParser:
             else:
                 coverage.claim(source, FinancialRole.MOVEMENT, index)
                 coverage.transaction(text_span(page, row, text))
+                match = TRANSACTION.fullmatch(text)
+                assert match is not None
+                coverage.field_sources(index, date=text_span(page, row, text, *match.span(1)),
+                    description=(text_span(page, row, text, *match.span(2)),),
+                    amount=source, direction=source, direction_basis="direction_marker", economic_order=index)
                 index += 1
         evidence = replace(validate_statement(statement),
                            running_balance_verified=EvidenceStatus.NOT_APPLICABLE,

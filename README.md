@@ -5,7 +5,7 @@ statements and uses OFX in its Athenas workflow. Financial document contents are
 processed locally, without external services, APIs, telemetry, or persistence
 beyond the requested output file.
 
-## Current status: M0 through M6 — Traceable analysis and independent OFX readiness
+## Current status: M0 through M7 — Composable structural operators and field provenance
 
 M0 proves a synthetic PDF → normalized statement → validation → OFX pipeline.
 M1 adds initial support for the **investigated Banco Inter digital layout**,
@@ -31,6 +31,11 @@ M6 separates approved interpretation from OFX export readiness. It adds immutabl
 financial evidence and index-only provenance, checks monetary coverage in the
 existing grammars, and keeps interpreted statements visible in the GUI when
 account metadata is missing. It adds no new layout family.
+M7 composes generic interpretation from small structural operators, preserves
+the legacy grammars for comparison, records sources for every transaction field
+and separates document order from economic order. Multiline descriptions and
+page frames can now be combined with signed values or C/D markers. It adds no
+new bank parser, runtime dependency or support for the third private layout.
 
 **Compatibilidade com Athenas ainda não validada.** The provisional OFX 1.02
 profile uses fictitious account metadata (`000` / `SYNTHETIC-DEMO`) only for the
@@ -145,13 +150,17 @@ by the automated suite.
 `convert_pdf` remains the CLI convenience wrapper for analysis plus export:
 
 ```text
-Local PDF → extracted pages → historical grammar or generic structural inference
-          → interpretation + source ownership → financial evidence
+Local PDF → extracted pages → visual structure → semantic candidates
+          → structural operators → hypotheses → constraints + source ownership
+          → interpretation + financial evidence
           → approved Statement → independent OFX readiness → provisional OFX
 ```
 
 Bank parsers receive our own document model. Extraction preserves both page text
-and immutable `Word` values with page, `x0`, `x1`, `top` and `bottom`. Third-party
+and immutable `Word` values with page, `x0`, `x1`, `top` and `bottom`.
+Pages also retain their original width/height. `pdf.geometry` exposes normalized
+coordinates, row proximity, alignment and distance helpers; original coordinates
+and the established row reconstruction remain intact. Third-party
 PDF objects never leave the extraction module. Coordinates use geometric numeric
 values; monetary values continue to use `Decimal` exclusively.
 The OFX generator receives domain
@@ -249,7 +258,7 @@ document = extract_pdf(Path("tests/fixtures/inter/statement.pdf"))
 inference = infer_layout(document)
 if inference.status == InferenceStatus.SUCCESS:
     assert inference.profile is not None
-    statement = GenericStatementParser().parse(document, inference.profile)
+    statement = GenericStatementParser().interpret_composed(document, inference.profile).statement
     portable_profile = inference.profile.to_json()  # structural data only
 ```
 
@@ -331,7 +340,11 @@ transactions and reconcile exactly; optional statement credit/debit totals are
 also checked. No operation keyword is used to infer direction. Nonzero summary
 adjustments without an interpretation as detailed transactions are rejected.
 
-`generic.grouped` keeps this additional row grammar isolated. Continuation text
+`generic.grouped` retains the legacy subtotal grammar for regression comparison.
+Its semantic controls, exact aggregation and page frames now reuse operators.
+The default generic inference and explicit application profiles use
+`generic.composition.interpret_composed`, which never invokes a full legacy
+grammar. Continuation text
 must lie in an observed description region before the numeric region, including
 across page boundaries. Profile geometry and row counts are portable, structural
 data only. Inference recognizes exact recurring headers/contact footers; parsing
@@ -345,8 +358,8 @@ layout. Tests include alternative positions, arbitrary operation labels,
 duplicates, missing pages, malformed frames and independent Decimal contexts.
 Legacy M4 JSON profiles remain readable; no automatic profile storage was added.
 
-Current limits: no debit/credit split columns, arbitrary wrapped descriptions
-outside the grouped-subtotal family, multiple transactions on one visual row,
+Current limits: no debit/credit split columns, automatic discovery of arbitrary
+wrapped descriptions in every layout, multiple transactions on one visual row,
 repeated body headers, arbitrary footer
 formats, other monetary locales, OCR, or unvalidated reverse chronological
 layouts. There is no wizard, profile storage, general support for whole banks, or Windows
@@ -355,8 +368,8 @@ only; reverse ordering with separate daily balances remains unsupported. Lack
 of official OFX is not a limitation by itself: PDF financial declarations and
 invariants provide the evidence required for interpretation. A future wizard
 can create profiles for the supported families and pass identity separately
-without changing the parser API; additional layout
-families require explicit capabilities and regression fixtures.
+without changing the parser API; new structures should combine explicit
+capabilities and regression fixtures rather than introduce full grammars.
 
 OFX format choices and metadata live in `ofx/generator.py`. The output remains
 OFX 1.02 SGML with closed tags, declared `USASCII` / `CHARSET:NONE` and actual
@@ -378,7 +391,7 @@ produce identical bytes without randomness or current-time dependencies.
 The existing FITID policy also includes `Statement.bank_id` and `layout_id`.
 Changing only the parser namespace can therefore change identifiers for identical
 financial transactions and cause duplicate imports downstream. M6 adds a
-regression demonstrating this risk and **does not change the algorithm**.
+regression demonstrating this risk; M7 also **does not change the algorithm**.
 For a recognized historical layout, supplying identity context no longer
 implicitly selects the generic parser. Callers that previously relied on that
 behavior must pass their previous structural profile explicitly to retain that
@@ -412,6 +425,73 @@ generated OFX and the reference, compare structure without depending on indentat
 and check domain values independently. The official Inter file's reverse order,
 opaque identifiers, extra transaction fields and inconsistent encoding are not
 replicated. These choices still require an actual Athenas import acceptance test.
+
+## M7 operator composition and migration
+
+`generic/operators/` contains local capabilities rather than complete parsers:
+
+| Capability | Responsibility | Output |
+| --- | --- | --- |
+| Scope segmentation | Partition retained rows and classify page frames | Financial scopes and informational regions |
+| Transaction segmentation | Bind single-line/multiline and cross-page rows | Candidate segments before amount roles |
+| Date attribution | Apply full-year individual/group dates and page context | Dated segments with source candidates |
+| Amount roles | Select movement/running balance and declared control roles | Magnitude and monetary role candidates |
+| Direction inference | Distinguish explicit signs, C/D and signed subtotals | Sign, evidence basis and source |
+| Chronology inference | Check document calendar sequence without reordering | Declared/inferred economic order and evidence |
+| Page continuation | Verify repeated headers, footers, notes and pagination | Retained rows |
+| Financial evidence | Check only available balances, subtotals and totals | Immutable EvidenceReport |
+
+Profile version 1 remains readable for M4/M5 payloads; no migration or automatic
+storage is necessary. Description/frame options no longer require subtotal mode.
+The currently proved unsigned-subtotal representation still requires grouped
+dates and absent running balances. Inference keeps its small enumeration of
+structural profiles; a general constraint solver is future work.
+Use `infer_layout(document, legacy=True)` or
+`GenericStatementParser().interpret(document, profile)` for the preserved legacy
+path. Historical recognized bank grammars remain the default baselines; their
+field sources were extended without changing their parsing or FITID namespace.
+The generic header/summary readers remain reused legacy components, isolated
+from transaction composition. Replacing these readers and enumerating local
+hypotheses are natural follow-ups for M8.
+
+Each transaction source exposes `date_source`, `description_sources`,
+`amount_source`, optional `balance_source`, `direction_source` and its evidence
+basis. References contain page, original visual row/nonblank text-line indexes,
+word interval and region ID; they do not duplicate descriptions or values.
+`pdf.sources.source_tokens(document, span, tolerances)` resolves a reference on
+demand, using the same profile row tolerances. Opening/closing, daily balances
+and totals remain traceable through monetary-role assignments.
+`StatementAnalysis.financial_scope` exposes the single coherent financial region.
+An explicit row partition can represent multiple financial scopes plus frames;
+M7 does not automatically select or convert multiple accounts.
+
+Ownership is inventoried before removing frames or selecting candidates. Missing,
+duplicate, overlapping or out-of-scope monetary assignments prevent completion,
+as do missing field sources, field/monetary role disagreements and descriptions
+or dates overlapping monetary tokens. Every successful occurrence owns one
+movement; every source running balance owns one corresponding balance. Monetary
+content cannot be relegated to informational frames, and there is no IGNORE role.
+Distinct surviving financial compositions yield AMBIGUOUS without scoring.
+
+Regression tests compare both public families with legacy output, resolve all
+fields, reuse wrapped descriptions/page continuity with signed amounts and C/D
+markers, and check actual PDF/CLI/GUI/OFX behavior. Metamorphic recipes cover
+horizontal/vertical translation, slight word spacing changes, 1% scaling and
+moving page breaks before/after movements. Transactions and financial evidence
+remain identical; changes beyond declared alignment/row tolerances abstain.
+
+```bash
+python -m pytest tests/generic/test_operators.py tests/generic/test_operator_metamorphic.py tests/ui/test_operator_composition.py -q
+python tools/verify_m7_equivalence.py /local/first.pdf /local/second.pdf
+```
+
+The optional private verifier accepts paths supplied locally and checks 29/13
+transactions, legacy/specific/composed equivalence, financial evidence, field
+sources and deterministic OFX using independent fictitious export metadata.
+It writes nothing and prints aggregates only. It never opens the third PDF.
+The third document is reserved for a final `analyze_pdf` diagnostic probe; failure
+results expose `blocking_capabilities` without source text. No rules were added
+for that document. Athenas acceptance and FITID migration remain separate work.
 
 ## Private documents
 

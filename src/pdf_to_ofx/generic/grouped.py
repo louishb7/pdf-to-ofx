@@ -6,7 +6,7 @@ transaction keyword, external OFX or a guessed amount sign.
 
 from dataclasses import replace
 from datetime import date
-from decimal import Context, Decimal, localcontext
+from decimal import Decimal
 from itertools import groupby
 import re
 
@@ -15,21 +15,19 @@ from pdf_to_ofx.domain.errors import (
 )
 from pdf_to_ofx.domain.evidence import EvidenceStatus, FinancialRole, Interpretation, SourceSpan
 from pdf_to_ofx.domain.models import Chronology, Statement, Transaction
+from pdf_to_ofx.generic.operators.candidates import _has_date, _stamp, _period, _flow
+from pdf_to_ofx.generic.operators.financial import _sum
+from pdf_to_ofx.generic.operators.pages import continue_pages as _frame
 from pdf_to_ofx.generic.provenance import VisualCoverage
-from pdf_to_ofx.generic.parser import PERIOD, StatementContext, leading_date
+from pdf_to_ofx.generic.parser import StatementContext, leading_date
 from pdf_to_ofx.generic.profile import AmountMode, BalanceMode, DateMode, LayoutProfile
 from pdf_to_ofx.generic.semantics import (
-    LONG_DATE, NUMERIC_DATE, SHORT_MONTH_DATE, has_financial_signal, money_regions, parse_date,
+    has_financial_signal, money_regions,
 )
 from pdf_to_ofx.generic.structure import Row, Tolerances, reconstruct_rows
 from pdf_to_ofx.pdf.document import ExtractedDocument
 from pdf_to_ofx.validation.statement import validate_statement
 
-FLOW = re.compile(r"total de (entradas|saídas|créditos|débitos):?", re.IGNORECASE)
-WRITTEN_PERIOD = re.compile(
-    r"(?:período:\s*)?([0-9]{1,2} de [a-zç]+ de [0-9]{4})\s+(?:a|até)\s+"
-    r"([0-9]{1,2} de [a-zç]+ de [0-9]{4})(?:\s+(.*))?", re.IGNORECASE,
-)
 SUMMARY = {
     "saldo inicial": "opening_balance", "saldo anterior": "opening_balance",
     "saldo final": "closing_balance", "saldo final do período": "closing_balance",
@@ -37,90 +35,6 @@ SUMMARY = {
     "total de saídas": "debits", "total de débitos": "debits",
     "rendimento líquido": "yield",
 }
-
-
-def _sum(values: list[Decimal]) -> Decimal:
-    if not values:
-        return Decimal("0.00")
-    precision = max(v.adjusted() for v in values) - min(v.as_tuple().exponent for v in values)
-    with localcontext(Context(prec=max(28, precision + len(str(len(values))) + 2))):
-        return sum(values, Decimal("0.00"))
-
-
-def _has_date(text: str) -> bool:
-    return any(pattern.search(text) for pattern in (NUMERIC_DATE, LONG_DATE, SHORT_MONTH_DATE))
-
-
-def _stamp(row: Row) -> bool:
-    return re.match(r"^(?:extrato|documento) gerado (?:em|(?:no )?dia)\b", row.text, re.IGNORECASE) is not None
-
-
-def _period(row: Row) -> tuple[date, date] | None:
-    match = PERIOD.fullmatch(row.text) or WRITTEN_PERIOD.fullmatch(row.text)
-    if match is None:
-        return None
-    start, end = parse_date(match[1]), parse_date(match[2])
-    caption = match[3] if match.re is WRITTEN_PERIOD else None
-    currency_caption = caption is not None and re.fullmatch(r"(?:valores|valor) em R\$", caption, re.IGNORECASE)
-    if start is None or end is None or (caption and not currency_caption and
-            (has_financial_signal(caption) or _has_date(caption))):
-        raise StatementParseError("Invalid or ambiguous declared period.")
-    return start, end
-
-
-def _flow(row: Row, tolerances: Tolerances) -> tuple[Decimal, int] | None:
-    dated = leading_date(row)
-    offset = dated[1] if dated else 0
-    regions = money_regions(row, tolerances)
-    if len(regions) != 1:
-        return None
-    region = regions[0]
-    label = " ".join(w.text for w in row.words[offset:region.start])
-    match = FLOW.fullmatch(label)
-    if match is None:
-        return None
-    credit = match[1].casefold() in {"entradas", "créditos"}
-    source = " ".join(w.text for w in row.words[region.start:region.end])
-    if (region.end != len(row.words) or region.money.marker is not None
-            or not region.money.explicit_sign or not source.startswith("+" if credit else "-")):
-        raise StatementParseError("Flow subtotals require an explicit consistent direction.")
-    return region.money.amount, 1 if credit else -1
-
-
-def _frame(rows: tuple[Row, ...], profile: LayoutProfile) -> tuple[Row, ...]:
-    if not rows:
-        raise StatementParseError("Positioned statement rows are required.")
-    pages = [list(group) for _, group in groupby(rows, key=lambda r: r.page)]
-    reference = [r.text for r in pages[0][:profile.repeated_header_rows]]
-    if any((has_financial_signal(row.text) or leading_date(row)) and not _period(row)
-           for row in pages[0][:profile.repeated_header_rows]):
-        raise StatementParseError("Repeated identity headers cannot contain monetary content.")
-    output = []
-    for index, page in enumerate(pages):
-        if profile.footer_rows:
-            if len(page) <= profile.footer_rows:
-                raise StatementParseError("Footer consumes a complete page.")
-            for row in page[-profile.footer_rows:]:
-                if has_financial_signal(row.text) or (_has_date(row.text) and not _stamp(row)):
-                    raise StatementParseError("Financial content cannot be removed as a footer.")
-                pagination = re.search(r"([0-9]+)\s*(?:de|/)\s*([0-9]+)$", row.text) if _stamp(row) else None
-                if pagination and (int(pagination[1]), int(pagination[2])) != (index + 1, len(pages)):
-                    raise StatementParseError("Declared pagination differs from the extracted pages.")
-            page = page[:-profile.footer_rows]
-        if index and profile.repeated_header_rows:
-            if [r.text for r in page[:profile.repeated_header_rows]] != reference:
-                raise StatementParseError("Repeated page headers differ from the initial declaration.")
-            page = page[profile.repeated_header_rows:]
-        if index == len(pages) - 1 and profile.trailing_note_rows:
-            if len(page) < profile.trailing_note_rows:
-                raise StatementParseError("Trailing notes consume a complete page.")
-            for row in page[-profile.trailing_note_rows:]:
-                if (has_financial_signal(row.text) or _has_date(row.text)
-                        or row.words[0].x0 >= profile.transaction_left - profile.tolerances.row_y):
-                    raise StatementParseError("Transaction-column or financial content cannot be removed as notes.")
-            page = page[:-profile.trailing_note_rows]
-        output.extend(page)
-    return tuple(output)
 
 
 def _context(header: tuple[Row, ...], profile: LayoutProfile,
@@ -267,6 +181,10 @@ def interpret_grouped_subtotals(document: ExtractedDocument, profile: LayoutProf
             coverage.monetary(row, region, FinancialRole.MOVEMENT, len(transactions))
             assert date_source is not None and flow_source is not None
             coverage.transaction(date_source, flow_source, coverage.span(row))
+            coverage.field_sources(len(transactions), date=date_source,
+                description=(coverage.span(row, 0, region.start),),
+                amount=coverage.span(row, region.start, region.end), direction=flow_source,
+                direction_basis="signed_group_subtotal", economic_order=len(transactions))
             transactions.append(Transaction(current_date, description, amount))
         else:
             if (not transactions or len(transactions) == group_start or has_financial_signal(row.text)

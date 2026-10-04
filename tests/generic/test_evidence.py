@@ -144,10 +144,11 @@ def test_cancelling_movements_cannot_disappear_behind_global_reconciliation(cove
 
     # Original extraction still contains +20/-20. Remove only the candidate
     # interpretation's rows AFTER the coverage inventory has been constructed.
-    with patch("pdf_to_ofx.generic.parser.strip_footers", side_effect=weak_selection):
+    with patch("pdf_to_ofx.generic.parser.strip_footers", side_effect=weak_selection), \
+         patch("pdf_to_ofx.generic.composition.continue_pages", side_effect=weak_selection):
         with pytest.raises(FinancialCoverageError, match="Unclassified monetary"):
             GenericStatementParser().interpret(document, inference.profile)
-        assert infer_layout(document).status == AnalysisStatus.INVALID
+        assert infer_layout(document, legacy=True).status == AnalysisStatus.INVALID
         assert analyze_pdf(coverage_pdf).status == AnalysisStatus.INVALID
     assert len(document.pages[0].words) == len(extract_pdf(coverage_pdf).pages[0].words)
 

@@ -10,9 +10,10 @@ from pdf_to_ofx.domain.errors import (
     MissingOFXRequirementsError, OFXGenerationError, PDFExtractionError,
     StatementParseError, StatementValidationError, UnsupportedLayoutError,
 )
-from pdf_to_ofx.domain.evidence import AnalysisStatus, EvidenceReport, EvidenceStatus, FinancialRole, Provenance
+from pdf_to_ofx.domain.evidence import AnalysisStatus, DocumentRegion, EvidenceReport, EvidenceStatus, FinancialRole, Provenance
 from pdf_to_ofx.domain.models import BankAccount, Statement
 from pdf_to_ofx.generic.inference import infer_layout
+from pdf_to_ofx.generic.operators.candidates import OperatorFailure
 from pdf_to_ofx.generic.parser import GenericStatementParser, StatementContext
 from pdf_to_ofx.generic.profile import LayoutProfile
 from pdf_to_ofx.ofx.generator import OFXProfile, account_profile, generate_ofx, validate_ofx_export
@@ -31,6 +32,11 @@ class StatementAnalysis:
     ambiguities: tuple[str, ...] = ()
     # Keep the public failure category without retaining a traceback/document.
     error_type: type[ConversionError] | None = None
+    blocking_capabilities: tuple[str, ...] = ()
+
+    @property
+    def financial_scope(self) -> DocumentRegion | None:
+        return self.provenance.financial_scope
 
 
 class ExportStatus(StrEnum):
@@ -87,12 +93,13 @@ def analyze_pdf(path: Path, *, layout_profile: LayoutProfile | None = None,
                     if value is not None and value != getattr(interpretation.statement, field):
                         raise StatementValidationError("Conflicting statement period or balance declarations.")
         elif layout_profile is not None:
-            interpretation = GenericStatementParser().interpret(document, layout_profile, context=financial_context)
+            interpretation = GenericStatementParser().interpret_composed(document, layout_profile, context=financial_context)
         else:
             inference = infer_layout(document, context=financial_context)
             if inference.status != AnalysisStatus.SUCCESS:
                 return StatementAnalysis(inference.status, reason=inference.reason,
-                    ambiguities=(inference.reason,) if inference.status == AnalysisStatus.AMBIGUOUS else ())
+                    ambiguities=(inference.reason,) if inference.status == AnalysisStatus.AMBIGUOUS else (),
+                    blocking_capabilities=inference.blocking_capabilities)
             assert inference.interpretation is not None
             interpretation = inference.interpretation
             layout_profile = inference.profile
@@ -107,9 +114,14 @@ def analyze_pdf(path: Path, *, layout_profile: LayoutProfile | None = None,
     except PDFExtractionError:
         return StatementAnalysis(AnalysisStatus.UNSUPPORTED, reason="PDF contains no usable digital text or cannot be read.",
                                  error_type=PDFExtractionError)
+    except AmbiguousStatementError as error:
+        return StatementAnalysis(AnalysisStatus.AMBIGUOUS, bank_name=name, reason=str(error),
+                                 ambiguities=(str(error),), layout_profile=layout_profile)
     except (StatementParseError, StatementValidationError) as error:
         return StatementAnalysis(AnalysisStatus.INVALID, bank_name=name, reason=str(error),
-                                 layout_profile=layout_profile, error_type=type(error))
+                                 layout_profile=layout_profile,
+                                 error_type=StatementParseError if isinstance(error, OperatorFailure) else type(error),
+                                 blocking_capabilities=(error.capability,) if isinstance(error, OperatorFailure) else ())
 
 
 def _approved_statement(analysis: StatementAnalysis) -> Statement:
@@ -127,6 +139,10 @@ def _approved_statement(analysis: StatementAnalysis) -> Statement:
     if (len(analysis.provenance.transactions) != count
             or sum(region.role == FinancialRole.MOVEMENT for region in analysis.provenance.monetary_regions) != count):
         raise StatementValidationError("Approved transactions differ from their coverage evidence.")
+    if (analysis.financial_scope is None or any(source.date_source is None or not source.description_sources
+            or source.amount_source is None or source.direction_source is None
+            for source in analysis.provenance.transactions)):
+        raise StatementValidationError("Complete field provenance and one financial scope are required.")
     return analysis.statement
 
 
