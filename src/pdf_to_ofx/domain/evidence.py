@@ -32,12 +32,18 @@ class EvidenceReport:
     debit_total_verified: EvidenceStatus = EvidenceStatus.NOT_AVAILABLE
     daily_balances_verified: EvidenceStatus = EvidenceStatus.NOT_AVAILABLE
     financial_coverage_verified: EvidenceStatus = EvidenceStatus.NOT_AVAILABLE
+    checkpoints_verified: EvidenceStatus = EvidenceStatus.NOT_AVAILABLE
+    checkpoint_links: int = 0
 
     @property
     def has_financial_support(self) -> bool:
         return (self.opening_closing_reconciled == EvidenceStatus.VERIFIED
                 or (self.running_balance_verified == EvidenceStatus.VERIFIED
-                    and self.running_balance_links > 0))
+                    and self.running_balance_links > 0)
+                or self.group_subtotals_verified == EvidenceStatus.VERIFIED
+                or (self.credit_total_verified == EvidenceStatus.VERIFIED
+                    and self.debit_total_verified == EvidenceStatus.VERIFIED)
+                or (self.checkpoints_verified == EvidenceStatus.VERIFIED and self.checkpoint_links > 0))
 
     @property
     def reconciliation_level(self) -> str:
@@ -45,6 +51,12 @@ class EvidenceReport:
             return "opening_closing"
         if self.running_balance_verified == EvidenceStatus.VERIFIED and self.running_balance_links:
             return "partial_running_chain"
+        if self.checkpoints_verified == EvidenceStatus.VERIFIED and self.checkpoint_links:
+            return "checkpoint_chain"
+        if self.group_subtotals_verified == EvidenceStatus.VERIFIED:
+            return "group_subtotals"
+        if self.credit_total_verified == self.debit_total_verified == EvidenceStatus.VERIFIED:
+            return "declared_totals"
         return "none"
 
 
@@ -82,6 +94,7 @@ class FinancialRole(StrEnum):
     BALANCE_COMPONENT = "balance_component"
     SUMMARY_ADJUSTMENT = "summary_adjustment"
     OTHER_FINANCIAL_CONTROL = "other_financial_control"
+    SPARSE_CHECKPOINT = "sparse_checkpoint"
 
 
 @dataclass(frozen=True, slots=True)

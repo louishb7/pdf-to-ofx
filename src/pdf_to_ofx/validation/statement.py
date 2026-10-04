@@ -5,7 +5,8 @@ from decimal import Context, Decimal, localcontext
 
 from pdf_to_ofx.domain.errors import StatementValidationError
 from pdf_to_ofx.domain.evidence import EvidenceReport, EvidenceStatus
-from pdf_to_ofx.domain.models import Chronology, Statement, Transaction
+from pdf_to_ofx.domain.models import BalanceCheckpoint, Chronology, Statement, Transaction
+from pdf_to_ofx.validation.checkpoints import check_checkpoints
 
 
 def _validate_money(value: Decimal, field: str) -> None:
@@ -47,6 +48,15 @@ def validate_domain(statement: Statement) -> None:
                          (statement.closing_balance, "Closing balance")):
         if value is not None:
             _validate_money(value, label)
+    if not isinstance(statement.checkpoints, tuple):
+        raise StatementValidationError("Checkpoints must be immutable.")
+    for point in statement.checkpoints:
+        if not isinstance(point, BalanceCheckpoint):
+            raise StatementValidationError("Invalid normalized checkpoint.")
+        _validate_money(point.balance, "Checkpoint balance")
+        if (type(point.after) is not int or not 0 <= point.after <= len(statement.transactions)
+                or point.kind not in {"daily_balance", "sparse_checkpoint"}):
+            raise StatementValidationError("Invalid economic checkpoint boundary or role.")
 
 
 def validate_statement(statement: Statement) -> EvidenceReport:
@@ -58,9 +68,10 @@ def validate_statement(statement: Statement) -> EvidenceReport:
     balances for transactions which lack a source balance.
     """
     validate_domain(statement)
-    ordered = statement.chronology == Chronology.ASCENDING
+    ordered = statement.chronology != Chronology.UNDECLARED
+    economic = statement.transactions[::-1] if statement.chronology == Chronology.DESCENDING else statement.transactions
     if ordered and any(a.posting_date > b.posting_date
-                       for a, b in zip(statement.transactions, statement.transactions[1:])):
+                       for a, b in zip(economic, economic[1:])):
         raise StatementValidationError("Declared economic order disagrees with posting-date order.")
     if statement.running_balances_required and any(t.balance_after is None for t in statement.transactions):
         raise StatementValidationError("The structural profile requires running balances for every transaction.")
@@ -77,7 +88,7 @@ def validate_statement(statement: Statement) -> EvidenceReport:
         if ordered:
             previous_balance = statement.opening_balance
             pending = Decimal("0.00")
-            for index, transaction in enumerate(statement.transactions, start=1):
+            for index, transaction in enumerate(economic, start=1):
                 pending += transaction.amount
                 if transaction.balance_after is None:
                     continue
@@ -102,6 +113,15 @@ def validate_statement(statement: Statement) -> EvidenceReport:
                 )
     verified = EvidenceStatus.VERIFIED
     unavailable = EvidenceStatus.NOT_AVAILABLE
+    points = list(statement.checkpoints)
+    if points:
+        points.extend(BalanceCheckpoint(i + 1, t.balance_after, "running_balance")
+                      for i, t in enumerate(economic) if t.balance_after is not None)
+        if statement.opening_balance is not None:
+            points.append(BalanceCheckpoint(0, statement.opening_balance, "opening_balance"))
+        if statement.closing_balance is not None:
+            points.append(BalanceCheckpoint(len(economic), statement.closing_balance, "closing_balance"))
+    checkpoint_links = check_checkpoints(tuple(t.amount for t in economic), tuple(points)) if ordered and points else 0
     return EvidenceReport(
         domain_valid=True, economic_order_verified=verified if ordered else unavailable,
         running_balance_verified=verified if links else unavailable,
@@ -109,4 +129,6 @@ def validate_statement(statement: Statement) -> EvidenceReport:
         first_movement_verified=verified if first_verified else unavailable,
         opening_closing_reconciled=verified if statement.opening_balance is not None
             and statement.closing_balance is not None else unavailable,
+        checkpoints_verified=verified if checkpoint_links else unavailable,
+        checkpoint_links=checkpoint_links,
     )

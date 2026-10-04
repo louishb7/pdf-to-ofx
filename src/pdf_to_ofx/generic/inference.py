@@ -1,8 +1,11 @@
-"""Enumerate small structural hypotheses; accept only a unique validated one."""
+"""Hypothesis inference by default; legacy profile enumeration remains an oracle."""
+
+from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from itertools import groupby
 import re
+from typing import TYPE_CHECKING
 
 from pdf_to_ofx.domain.errors import (
     AmbiguousStatementError, FinancialCoverageError, RecognizedInvalidStatementError,
@@ -17,6 +20,10 @@ from pdf_to_ofx.generic.semantics import has_financial_signal
 from pdf_to_ofx.generic.structure import Row, Tolerances, reconstruct_rows
 from pdf_to_ofx.pdf.document import ExtractedDocument
 
+if TYPE_CHECKING:
+    from pdf_to_ofx.generic.hypotheses import SearchBudget, StructuralHypothesis
+    from pdf_to_ofx.generic.operators.scopes import FinancialScope
+
 
 InferenceStatus = AnalysisStatus
 
@@ -28,6 +35,11 @@ class InferenceResult:
     reason: str
     interpretation: Interpretation | None = None
     blocking_capabilities: tuple[str, ...] = ()
+    candidate_hypotheses: int = 0
+    explored_hypotheses: int = 0
+    pruned_constraints: tuple[tuple[str, int], ...] = ()
+    hypotheses: tuple[StructuralHypothesis, ...] = ()
+    budget_exhausted: bool = False
 
 
 def _contact_footer_rows(rows: tuple[Row, ...]) -> int:
@@ -51,7 +63,15 @@ def _contact_footer_rows(rows: tuple[Row, ...]) -> int:
 
 
 def infer_layout(document: ExtractedDocument, *, context: StatementContext | None = None,
-                 tolerances: Tolerances = Tolerances(), legacy: bool = False) -> InferenceResult:
+                 tolerances: Tolerances = Tolerances(), legacy: bool = False,
+                 operators: bool = False, profile: LayoutProfile | None = None,
+                 budget: SearchBudget | None = None, reverse_candidates: bool = False,
+                 scope_candidates: tuple[FinancialScope, ...] | None = None) -> InferenceResult:
+    if not legacy and not operators:
+        from pdf_to_ofx.generic.hypotheses import SearchBudget, infer_hypotheses
+        return infer_hypotheses(document, context=context, profile=profile, tolerances=tolerances,
+            budget=budget if budget is not None else SearchBudget(), reverse_candidates=reverse_candidates,
+            scope_candidates=scope_candidates)
     if context is not None:
         # Identity can neither select a grammar nor change financial acceptance.
         context = replace(context, bank_id="unknown", account=None)

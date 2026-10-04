@@ -24,17 +24,20 @@ class ControlRole:
     role: FinancialRole
 
 
-def infer_control_roles(candidate: RowCandidate, balance_mode: BalanceMode) -> tuple[ControlRole, ...]:
+def infer_control_roles(candidate: RowCandidate, balance_mode: BalanceMode,
+                        *, allow_checkpoints: bool = False) -> tuple[ControlRole, ...]:
     """Only declared financial control regions receive control ownership."""
     if candidate.kind == "flow":
         return (ControlRole(candidate.amounts[0], FinancialRole.SUBTOTAL),)
+    if candidate.kind == "checkpoint" and allow_checkpoints:
+        return (ControlRole(candidate.amounts[0], FinancialRole.SPARSE_CHECKPOINT),)
     if candidate.kind != "date_heading":
         return ()
     row = candidate.row
     date_end = candidate.dates[0].end
     if date_end == len(row.words):
         return ()
-    if len(candidate.amounts) != 1 or balance_mode != BalanceMode.RUNNING:
+    if len(candidate.amounts) != 1 or not allow_checkpoints and balance_mode != BalanceMode.RUNNING:
         raise OperatorFailure("amount_role_inference", "Unsupported monetary date-group control.")
     region = candidate.amounts[0]
     before = " ".join(w.text for w in row.words[date_end:region.start])
@@ -67,3 +70,24 @@ def infer_amount_roles(segment: TransactionSegment, profile: LayoutProfile) -> A
         raise OperatorFailure("amount_role_inference", "Movement representation differs from the structural profile.")
     balance = regions[profile.balance_column] if profile.balance_column is not None else None
     return AmountRoles(movement, money.amount.copy_abs(), balance)
+
+
+def amount_role_candidates(segment: TransactionSegment, geometry: LayoutProfile,
+                           *, constraint: LayoutProfile | None = None) -> tuple[AmountRoles, ...]:
+    """One or two local role bindings, without interpreting the full document."""
+    from dataclasses import replace
+    size = len(segment.rows[0].amounts)
+    if size not in (1, 2) or geometry.amount_mode == AmountMode.GROUP_SUBTOTAL and size != 1:
+        return ()
+    if constraint and size != (2 if constraint.balance_mode == BalanceMode.RUNNING else 1):
+        return ()
+    columns = (constraint.movement_column,) if constraint else range(size)
+    output = []
+    for column in columns:
+        profile = replace(geometry, balance_mode=BalanceMode.RUNNING if size == 2 else BalanceMode.ABSENT,
+                          movement_column=column, balance_column=1 - column if size == 2 else None)
+        try:
+            output.append(infer_amount_roles(segment, profile))
+        except OperatorFailure:
+            continue
+    return tuple(output)

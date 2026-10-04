@@ -1,4 +1,4 @@
-"""Read two local fixtures and report M7 equivalence using aggregates only.
+"""Read two local fixtures and report M7/M8 equivalence using aggregates only.
 
 Usage: python tools/verify_m7_equivalence.py /local/first.pdf /local/second.pdf
 Nothing is uploaded or written. The third document is deliberately excluded.
@@ -20,12 +20,14 @@ from pdf_to_ofx.pdf.sources import source_tokens
 
 def verify(path: Path, expected: int, *, specific: bool) -> dict[str, int | bool]:
     document = extract_pdf(path)
-    legacy, composed = infer_layout(document, legacy=True), infer_layout(document)
-    if legacy.status != AnalysisStatus.SUCCESS or composed.status != AnalysisStatus.SUCCESS:
+    legacy, operators, composed = (infer_layout(document, **mode) for mode in
+        ({"legacy": True}, {"operators": True}, {}))
+    if any(r.status != AnalysisStatus.SUCCESS for r in (legacy, operators, composed)):
         raise ValueError("A fixture did not produce a successful interpretation.")
     old, new = legacy.interpretation, composed.interpretation
     if (len(new.statement.transactions) != expected or old.statement != new.statement
-            or old.evidence != new.evidence):
+            or old.evidence != new.evidence or operators.interpretation.statement != new.statement
+            or operators.interpretation.evidence != new.evidence):
         raise ValueError("Transaction counts, financial models or evidence differ.")
     if specific:
         baseline = InterParser().interpret(document)
@@ -51,7 +53,7 @@ def verify(path: Path, expected: int, *, specific: bool) -> dict[str, int | bool
     payload = generate_ofx(new.statement, profile)
     if payload != generate_ofx(old.statement, profile) or payload != generate_ofx(new.statement, profile):
         raise ValueError("Legacy/operator exports differ or export is nondeterministic.")
-    return {"operator_transactions": expected, "semantic_match": True,
+    return {"transactions": expected, "match": True, "legacy_operator_hypothesis_match": True,
             "evidence_match": True, "coverage_verified": True,
             "field_sources_verified": True, "ofx_deterministic": True}
 
@@ -65,7 +67,7 @@ def main() -> int:
         first = verify(args.first, 29, specific=True)
         second = verify(args.second, 13, specific=False)
     except (ConversionError, ValueError):
-        print("M7 equivalence verification failed; no private contents were recorded.")
+        print("M7/M8 equivalence verification failed; no private contents were recorded.")
         return 1
     for label, result in (("inter", first), ("second", second)):
         for key, value in result.items():

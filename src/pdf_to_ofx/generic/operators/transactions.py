@@ -31,6 +31,9 @@ def semantic_candidates(rows: tuple[Row, ...], profile: LayoutProfile) -> tuple[
         kind = "content"
         if _period(row):
             kind = "period"
+        elif (len(amounts) == 1 and amounts[0].end == len(row.words)
+              and " ".join(w.text for w in row.words[:amounts[0].start]).casefold() == "saldo intermediário:"):
+            kind = "checkpoint"
         elif _flow(row, profile.tolerances) is not None:
             kind = "flow"
         elif (len(dates) == 1 and dates[0].start == 0 and
@@ -54,7 +57,7 @@ def segment_transactions(candidates: tuple[RowCandidate, ...], profile: LayoutPr
         if row.page != previous_page and not profile.carry_date_across_pages:
             active = False
         previous_page = row.page
-        if candidate.kind in {"date_heading", "flow"}:
+        if candidate.kind in {"date_heading", "flow", "checkpoint"}:
             active = False
             continue
         if candidate.kind != "content":

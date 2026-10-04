@@ -16,6 +16,33 @@ class DatedSegment:
     group_position: int
 
 
+def date_assignment_candidates(segments: tuple[TransactionSegment, ...], candidates: tuple[RowCandidate, ...],
+                               *, mode: DateMode | None = None,
+                               carry_across_pages: bool = True) -> tuple[tuple[DatedSegment, ...], ...]:
+    """Keep local full-year alternatives; period constraints decide later."""
+    output = []
+    by_position = {s.position: s for s in segments}
+    current: RowCandidate | None = None
+    previous_page = None
+    for row in candidates:
+        if row.row.page != previous_page and not carry_across_pages:
+            current = None
+        previous_page = row.row.page
+        if row.kind in {"date_heading", "flow"} and row.dates:
+            current = row
+        segment = by_position.get(row.position)
+        if segment is None:
+            continue
+        sources = []
+        if row.dates and mode != DateMode.GROUPED:
+            sources.append(row)
+        if current is not None and mode != DateMode.PER_TRANSACTION:
+            sources.append(current)
+        output.append(tuple(DatedSegment(segment, date, source, source.position)
+                            for source in sources for date in source.dates))
+    return tuple(output)
+
+
 def attribute_dates(segments: tuple[TransactionSegment, ...], candidates: tuple[RowCandidate, ...],
                     mode: DateMode, *, carry_across_pages: bool) -> tuple[DatedSegment, ...]:
     output = []

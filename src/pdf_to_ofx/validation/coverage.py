@@ -66,6 +66,10 @@ class CoverageLedger:
     def finish(self, statement: Statement, evidence: EvidenceReport) -> Interpretation:
         if self.expected != self.assignments.keys():
             raise FinancialCoverageError("Unclassified monetary regions remain in the document.")
+        for checkpoint in statement.checkpoints:
+            if (checkpoint.source is None or self.assignments.get(checkpoint.source) !=
+                    MonetaryAssignment(checkpoint.source, FinancialRole(checkpoint.kind), None)):
+                raise FinancialCoverageError("A checkpoint has no exclusive financial source.")
         movements = [a.transaction_index for a in self.assignments.values()
                      if a.role == FinancialRole.MOVEMENT]
         if (len(self.transactions) != len(statement.transactions)

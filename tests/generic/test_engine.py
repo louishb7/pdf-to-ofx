@@ -155,7 +155,8 @@ def test_duplicate_descriptions_and_amounts_are_preserved(make_document):
 
 @pytest.mark.parametrize("extra", ["Saldo final: R$ 100,01 R$ BAD", "Saldo final: R$ 100,02", "OPERAÇÃO MALFORMADA R$ BAD"])
 def test_unclassified_or_conflicting_header_finances_fail(make_document, extra):
-    assert infer_layout(make_document(HEADER + extra + "\n" + BODY)).status == InferenceStatus.UNSUPPORTED
+    expected = InferenceStatus.INVALID if extra == "Saldo final: R$ 100,02" else InferenceStatus.UNSUPPORTED
+    assert infer_layout(make_document(HEADER + extra + "\n" + BODY)).status == expected
 
 
 def test_arbitrary_text_rows_cannot_disappear_as_footers(make_document):

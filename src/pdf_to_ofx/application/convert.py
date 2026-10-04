@@ -14,7 +14,7 @@ from pdf_to_ofx.domain.evidence import AnalysisStatus, DocumentRegion, EvidenceR
 from pdf_to_ofx.domain.models import BankAccount, Statement
 from pdf_to_ofx.generic.inference import infer_layout
 from pdf_to_ofx.generic.operators.candidates import OperatorFailure
-from pdf_to_ofx.generic.parser import GenericStatementParser, StatementContext
+from pdf_to_ofx.generic.parser import StatementContext
 from pdf_to_ofx.generic.profile import LayoutProfile
 from pdf_to_ofx.ofx.generator import OFXProfile, account_profile, generate_ofx, validate_ofx_export
 from pdf_to_ofx.pdf.extractor import extract_pdf
@@ -33,6 +33,7 @@ class StatementAnalysis:
     # Keep the public failure category without retaining a traceback/document.
     error_type: type[ConversionError] | None = None
     blocking_capabilities: tuple[str, ...] = ()
+    candidate_hypotheses: int = 0
 
     @property
     def financial_scope(self) -> DocumentRegion | None:
@@ -71,7 +72,7 @@ def analyze_pdf(path: Path, *, layout_profile: LayoutProfile | None = None,
     """Extract, interpret, cover and verify locally; never generate OFX.
 
     Identity supplied in legacy context is deliberately excluded. An explicit
-    profile selects a structural grammar; identity never selects a parser.
+    profile constrains structural candidates; identity never selects hypotheses.
     Recognized historical parser failures are never bypassed by inference.
     """
     financial_context = replace(context, bank_id="unknown", account=None) if context else None
@@ -86,23 +87,29 @@ def analyze_pdf(path: Path, *, layout_profile: LayoutProfile | None = None,
                 pass
         if parser is not None:
             name = parser.bank_name
-            interpretation = parser.interpret(document)
+            baseline = parser.interpret(document)
             if financial_context is not None:
                 for field in ("period_start", "period_end", "opening_balance", "closing_balance"):
                     value = getattr(financial_context, field)
-                    if value is not None and value != getattr(interpretation.statement, field):
+                    if value is not None and value != getattr(baseline.statement, field):
                         raise StatementValidationError("Conflicting statement period or balance declarations.")
-        elif layout_profile is not None:
-            interpretation = GenericStatementParser().interpret_composed(document, layout_profile, context=financial_context)
-        else:
-            inference = infer_layout(document, context=financial_context)
-            if inference.status != AnalysisStatus.SUCCESS:
-                return StatementAnalysis(inference.status, reason=inference.reason,
-                    ambiguities=(inference.reason,) if inference.status == AnalysisStatus.AMBIGUOUS else (),
-                    blocking_capabilities=inference.blocking_capabilities)
-            assert inference.interpretation is not None
-            interpretation = inference.interpretation
-            layout_profile = inference.profile
+        inference = infer_layout(document, context=financial_context, profile=layout_profile)
+        if inference.status != AnalysisStatus.SUCCESS:
+            return StatementAnalysis(inference.status, bank_name=name, reason=inference.reason,
+                ambiguities=(inference.reason,) if inference.status == AnalysisStatus.AMBIGUOUS else (),
+                blocking_capabilities=inference.blocking_capabilities,
+                candidate_hypotheses=inference.candidate_hypotheses)
+        assert inference.interpretation is not None
+        interpretation = inference.interpretation
+        layout_profile = inference.profile
+        if parser is not None:
+            # The legacy oracle guards migration and retains the FITID namespace.
+            # Identity is attached only AFTER the institution-independent search.
+            normalized = replace(interpretation.statement, bank_id=baseline.statement.bank_id,
+                layout_id=baseline.statement.layout_id, account=baseline.statement.account)
+            if normalized != baseline.statement:
+                raise StatementValidationError("Structural hypotheses differ from the established regression oracle.")
+            interpretation = replace(interpretation, statement=normalized)
         if (not interpretation.evidence.has_financial_support
                 or interpretation.evidence.financial_coverage_verified != EvidenceStatus.VERIFIED):
             reason = "Independent financial evidence or complete monetary coverage is insufficient."
@@ -110,7 +117,8 @@ def analyze_pdf(path: Path, *, layout_profile: LayoutProfile | None = None,
                 provenance=interpretation.provenance, layout_profile=layout_profile,
                 bank_name=name, reason=reason, ambiguities=(reason,))
         return StatementAnalysis(AnalysisStatus.SUCCESS, interpretation.statement,
-            interpretation.evidence, interpretation.provenance, layout_profile, name)
+            interpretation.evidence, interpretation.provenance, layout_profile, name,
+            candidate_hypotheses=inference.candidate_hypotheses)
     except PDFExtractionError:
         return StatementAnalysis(AnalysisStatus.UNSUPPORTED, reason="PDF contains no usable digital text or cannot be read.",
                                  error_type=PDFExtractionError)

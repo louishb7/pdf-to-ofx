@@ -7,7 +7,7 @@ from pdf_to_ofx.domain.errors import StatementParseError
 from pdf_to_ofx.generic.profile import LayoutProfile
 from pdf_to_ofx.generic.semantics import has_financial_signal
 from pdf_to_ofx.generic.structure import Row
-from pdf_to_ofx.generic.operators.candidates import _has_date, _period, _stamp, leading_date
+from pdf_to_ofx.generic.operators.candidates import OperatorFailure, _has_date, _period, _stamp, leading_date
 
 
 def continue_pages(rows: tuple[Row, ...], profile: LayoutProfile) -> tuple[Row, ...]:
@@ -30,7 +30,7 @@ def continue_pages(rows: tuple[Row, ...], profile: LayoutProfile) -> tuple[Row, 
                     raise StatementParseError("Financial content cannot be removed as a footer.")
                 pagination = re.search(r"([0-9]+)\s*(?:de|/)\s*([0-9]+)$", row.text) if _stamp(row) else None
                 if pagination and (int(pagination[1]), int(pagination[2])) != (index + 1, len(pages)):
-                    raise StatementParseError("Declared pagination differs from the extracted pages.")
+                    raise OperatorFailure("pagination_consistency", "Declared pagination differs from the extracted pages.")
             page = page[:-profile.footer_rows]
         if index and profile.repeated_header_rows:
             if [r.text for r in page[:profile.repeated_header_rows]] != reference:

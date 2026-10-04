@@ -110,7 +110,7 @@ def test_weak_or_inconsistent_flow_hypotheses_are_rejected(changed_document, bef
                 for cell in row["cells"]:
                     if cell[1] == before:
                         cell[1] = after
-    expected = InferenceStatus.INVALID if after in {"+21,00", "-14,00", "9,99"} else InferenceStatus.UNSUPPORTED
+    expected = InferenceStatus.INVALID if after in {"+21,00", "-14,00", "9,99", "106,00"} else InferenceStatus.UNSUPPORTED
     assert infer_layout(changed_document(change)).status == expected
 
 
@@ -163,10 +163,13 @@ def test_nonzero_undetailed_yield_fails_closed(changed_document):
     assert infer_layout(changed_document(change)).status == InferenceStatus.UNSUPPORTED
 
 
-def test_without_declared_opening_or_closing_balance_inference_fails(changed_document):
+def test_without_opening_balance_signed_subtotals_still_supply_independent_evidence(changed_document):
     def change(pages):
         del pages[0][2]
-    assert infer_layout(changed_document(change)).status == InferenceStatus.UNSUPPORTED
+    result = infer_layout(changed_document(change))
+    assert result.status == InferenceStatus.SUCCESS
+    assert result.interpretation.statement.opening_balance is None
+    assert result.interpretation.evidence.has_financial_support
 
 
 def test_context_cannot_override_pdf_declarations(flow_pdf):
@@ -256,7 +259,9 @@ def test_duplicate_grouped_transactions_are_retained(changed_document):
 
 def test_missing_last_page_is_detected_even_when_totals_would_reconcile(changed_document):
     document = changed_document(lambda pages: pages.pop())
-    assert infer_layout(document).status == InferenceStatus.UNSUPPORTED
+    result = infer_layout(document)
+    assert result.status == InferenceStatus.INVALID
+    assert result.blocking_capabilities == ("pagination_consistency",)
 
 
 def test_explicit_group_profile_reports_empty_document_as_a_safe_parse_error():

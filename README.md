@@ -444,15 +444,14 @@ replicated. These choices still require an actual Athenas import acceptance test
 Profile version 1 remains readable for M4/M5 payloads; no migration or automatic
 storage is necessary. Description/frame options no longer require subtotal mode.
 The currently proved unsigned-subtotal representation still requires grouped
-dates and absent running balances. Inference keeps its small enumeration of
-structural profiles; a general constraint solver is future work.
+dates and absent running balances. M8 uses bounded local hypotheses by default;
+profile enumeration is retained only for regression oracles.
 Use `infer_layout(document, legacy=True)` or
 `GenericStatementParser().interpret(document, profile)` for the preserved legacy
-path. Historical recognized bank grammars remain the default baselines; their
-field sources were extended without changing their parsing or FITID namespace.
-The generic header/summary readers remain reused legacy components, isolated
-from transaction composition. Replacing these readers and enumerating local
-hypotheses are natural follow-ups for M8.
+path. Historical recognized grammars remain regression guards. After their successful
+validation, the application prefers hypothesis composition, verifies semantic
+equivalence and preserves their original FITID namespace. M8 combines the proved
+header/summary bindings in one local operator; the older readers remain oracles.
 
 Each transaction source exposes `date_source`, `description_sources`,
 `amount_source`, optional `balance_source`, `direction_source` and its evidence
@@ -492,6 +491,92 @@ It writes nothing and prints aggregates only. It never opens the third PDF.
 The third document is reserved for a final `analyze_pdf` diagnostic probe; failure
 results expose `blocking_capabilities` without source text. No rules were added
 for that document. Athenas acceptance and FITID migration remain separate work.
+
+## M8: constrained structural hypotheses
+
+`generic/hypotheses.py` searches small local domains over the M7 operators. An
+immutable `StructuralHypothesis` references one financial scope, segments, date
+bindings, monetary roles, directions and economic chronology. `SearchBudget`
+limits each segment to four date/amount combinations and the entire exploration
+to 128 partial/complete states. Exceeding either limit yields `AMBIGUOUS`, even
+when a plausible winner has already been found. No external solver, scoring,
+network access or dependency was added.
+
+The default path observes structural frames once, generates supported local date
+and column alternatives, then extends one segment at a time. It verifies source
+membership, exclusive ownership, period compatibility, column-role continuity,
+subtotal signs/bounds, declared credit/debit bounds and complete financial links
+before building a Statement. Only surviving complete candidates reach the shared
+M7 materializer and full validation. Missing evidence does not fail a constraint.
+A supplied `LayoutProfile` narrows dates, columns and frames; it cannot waive
+ownership, provenance or financial reconciliation. Version-1 M4/M5 JSON continues
+to load unchanged. Identity supplied in context is removed before search.
+
+Chronology candidates can represent `ASCENDING`, `DESCENDING` and `UNKNOWN`
+(the historical serialized `undeclared` value). Transactions retain document
+order. When balance positions provide order-dependent controls, ascending and
+descending hypotheses are tested with the same exact mathematics. Unknown order
+cannot certify positional checkpoint links. Calendar evidence still constrains
+monotonic economic dates; reversed layouts without verifiable order controls
+remain unsupported. The fictitious reverse fixture deliberately uses identical
+posting dates, so only balance mathematics selects descending order.
+
+`BalanceCheckpoint.after` counts preceding movements in economic order. Opening,
+running, daily, sparse and closing balances form boundaries; a link is verified
+as soon as all movements between its endpoints are assigned. Exact Decimal
+arithmetic checks `later - earlier = sum(interval)` and also rejects conflicting
+balances at the same boundary. Standalone daily/sparse checkpoints carry PDF
+references and exclusive monetary ownership. Missing per-transaction balances
+stay absent. Detection currently covers only proved daily headings and an explicit
+synthetic intermediate-balance label, not universal checkpoint recognition.
+
+Material equivalence compares financial fields, economic ordering, controls,
+coverage and original field tokens. Adjacent description spans split differently
+but referencing the same tokens are equivalent. Distinct financial outcomes or
+material origins never receive a score or first-candidate tie-break. A canonical
+representation is chosen only among materially equivalent survivors. Changing
+candidate enumeration order does not change the selected interpretation.
+
+The minimum evidence policy accepts a verified independent control: opening plus
+closing, at least one running/checkpoint interval, signed group subtotals, or both
+declared credit and debit totals. A partial chain proves its checked intervals,
+not unseen endpoints. A lone closing balance, dates, coverage or movement signs
+alone do not suffice. Absent controls remain `NOT_AVAILABLE`/`NOT_APPLICABLE`
+according to their existing evidence semantics. Accordingly, removing an opening
+balance from a statement with reconciled signed subtotals no longer forces
+abstention. Conflicting understood summary declarations now yield `INVALID`
+rather than the legacy generic `UNSUPPORTED` classification.
+
+Acceptance requires one material outcome, complete field provenance, complete
+monetary coverage, every applicable hard constraint and independent evidence.
+Surviving competing interpretations or exhausted search yield `AMBIGUOUS`.
+Missing structural capacities yield `UNSUPPORTED`; understood contradictions
+without a survivor yield `INVALID`. Failed branches retain only constraint names
+and counts, not raw document contents. The old generic `financial_context` label
+is replaced by specific period, balance-label, summary-value, unclassified-region
+and adjustment diagnostics. `StatementAnalysis.candidate_hypotheses` counts full
+assignments attempted; partial exploration and pruning counts are available in
+`InferenceResult`.
+
+Legacy `InterParser`, `parser.py` and `grouped.py` remain oracles. The new path
+still reuses their small context model and observed frame/description-boundary
+inference. Removing them requires further extraction of that frame observation
+and a separately authorized FITID/recognized-layout migration. No UI redesign or
+parsing logic was added to the UI; successful statements lacking account metadata
+remain visible with export disabled.
+
+```bash
+python -m pytest -q
+python -m pytest tests/generic/test_hypotheses.py tests/ui/test_hypothesis_states.py -q
+python tools/verify_m7_equivalence.py /local/first.pdf /local/second.pdf
+```
+
+The aggregate-only private verifier compares legacy, M7 operators and M8
+hypotheses, including the specific oracle for the first fixture, coverage, field
+sources and deterministic OFX. The third PDF is reserved for a final diagnostic
+probe, never for deriving new layout rules. Current limits include one financial
+scope, at most two transaction monetary regions and bounded local alternatives;
+there is no broad segmentation search or automatic multi-account conversion.
 
 ## Private documents
 
