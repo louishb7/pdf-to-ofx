@@ -5,7 +5,7 @@ statements and uses OFX in its Athenas workflow. Financial document contents are
 processed locally, without external services, APIs, telemetry, or persistence
 beyond the requested output file.
 
-## Current status: M0 and M1
+## Current status: M0, M1 and M2
 
 M0 proves a synthetic PDF → normalized statement → validation → OFX pipeline.
 M1 adds initial support for the **investigated Banco Inter digital layout**,
@@ -14,8 +14,10 @@ This is not general support for every Banco Inter statement. Only digital PDFs
 with extractable text are supported; pages without usable text fail explicitly.
 Malformed rows, unsupported layout variations and balance mismatches stop
 conversion. There is no GUI or OCR; processing remains entirely local.
+M2 hardens deterministic OFX export and tests its financial semantics against
+a small, fully fictitious public reference.
 
-**Athenas compatibility has not been validated.** The provisional OFX 1.02
+**Compatibilidade com Athenas ainda não validada.** The provisional OFX 1.02
 profile uses fictitious account metadata (`000` / `SYNTHETIC-DEMO`) only for the
 Synthetic Bank fixture. Inter exports use account/branch identifiers extracted
 from the document and explicit institution metadata for BRL checking accounts.
@@ -72,8 +74,9 @@ Local PDF → extracted pages → deterministic layout detection → layout pars
 
 Bank parsers receive our own document model. The OFX generator receives domain
 values and also validates direct callers. Monetary values use `Decimal`, positive
-for credits and negative for debits, with exact cent reconciliation. Transactions
-retain document order; unsupported text is rejected rather than ignored.
+for credits and negative for debits, with exact cent reconciliation. Normalized
+transactions retain document order for balance validation; export sorts a copy.
+Unsupported text is rejected rather than ignored.
 
 Inter preserves the balance after each transaction and checks every adjacent
 balance, each daily closing balance and the statement closing balance. Its
@@ -87,17 +90,42 @@ The CLI publishes complete exports without replacing existing files using a
 temporary file and a hard link in the destination directory. Filesystems without
 hard-link support fail explicitly; output permissions are owner-only on POSIX.
 
-OFX format choices and metadata live in `ofx/generator.py`. FITIDs are derived
-from normalized transaction/account data and an occurrence number for identical
-duplicates. Identical inputs produce identical exports. Dates are emitted at
-midnight without a timezone; `DTSERVER` uses the statement end date. These are
-provisional choices awaiting compatibility tests, not asserted bank identities.
-Inter also exports `FI/ORG`, `FID` and `BRANCHID`. The branch check-digit separator
-is preserved, account identifiers use digits, and leading zeroes are retained.
-The official file's date/type/identifier peculiarities are not replicated: we
-retain midnight dates, `CREDIT`/`DEBIT`, source descriptions in `MEMO`, and hashed
-FITIDs including branch identity and duplicate occurrence numbers. We do not
-invent `NAME`, `CHECKNUM` or `REFNUM`, or reproduce inconsistent encoding headers.
+OFX format choices and metadata live in `ofx/generator.py`. The output remains
+OFX 1.02 SGML with closed tags, declared `USASCII` / `CHARSET:NONE` and actual
+ASCII bytes. Accents are preserved through numeric character references. The
+CLI uses this same encoding. Dates use `YYYYMMDD`, without invented times or
+timezones; `DTSERVER` and `DTASOF` use the statement end date.
+
+Export order is ascending calendar date, then description (Unicode lexical
+order), then signed amount. Source chronology and running balances must pass
+validation before sorting; invalid source order is still rejected. FITIDs use
+SHA-256 of normalized transaction/account identity plus an occurrence number
+for identical duplicates. Duplicate transactions remain present with unique,
+stable IDs; an identifier collision fails explicitly. Sorting does not change
+transaction identity. Monetary values have two decimal places; signed zero is
+canonicalized to `0.00`, including in FITID identity. Identical normalized inputs
+produce identical bytes without randomness or current-time dependencies.
+
+`CREDIT` represents nonnegative amounts (including neutral zero), and `DEBIT`
+represents negative amounts. The generic model cannot distinguish a payment
+from another debit, so it does not infer `PAYMENT`. The complete normalized
+description is exported once in `MEMO`. No `NAME`, `CHECKNUM` or `REFNUM` is
+invented when the model has no corresponding information.
+
+`OFXProfile` requires explicit bank/account IDs; only the Synthetic Bank path
+can select the centralized fictitious profile automatically. Real-bank exports
+require institution, branch and account metadata, reject known synthetic
+placeholders and reject conflicts with the statement. Inter exports `FI/ORG`,
+`FID` and `BRANCHID`. The branch check-digit separator is preserved, account
+identifiers use digits, and leading zeroes are retained. Institution names come
+from our explicit domain metadata rather than copying an official file's label.
+
+The public reference at `tests/fixtures/ofx/reference.ofx` contains only fictitious
+metadata and three cent-valued transactions with accents. Tests parse both the
+generated OFX and the reference, compare structure without depending on indentation,
+and check domain values independently. The official Inter file's reverse order,
+opaque identifiers, extra transaction fields and inconsistent encoding are not
+replicated. These choices still require an actual Athenas import acceptance test.
 
 ## Private documents
 

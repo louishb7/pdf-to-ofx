@@ -39,7 +39,10 @@ def test_real_statement_without_metadata_fails(inter_statement: Statement) -> No
 
 def test_default_synthetic_profile_is_rejected_for_real_bank(inter_statement: Statement) -> None:
     with pytest.raises(OFXGenerationError, match="Synthetic"):
-        generate_ofx(inter_statement, OFXProfile())
+        generate_ofx(inter_statement, OFXProfile(
+            bank_id="000", account_id="SYNTHETIC-DEMO", branch_id="9999-9",
+            organization="Synthetic Bank", institution_id="000",
+        ))
 
 
 @pytest.mark.parametrize("changes", [

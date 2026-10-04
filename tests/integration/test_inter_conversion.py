@@ -69,3 +69,15 @@ def test_real_layout_pipeline_has_no_network_calls(inter_pdf: Path) -> None:
     with patch("socket.socket", side_effect=AssertionError("Network forbidden")), \
          patch("socket.create_connection", side_effect=AssertionError("Network forbidden")):
         assert len(convert_pdf(inter_pdf).statement.transactions) == 5
+
+
+def test_fitid_collision_prevents_cli_export(inter_pdf: Path, tmp_path: Path,
+                                           capsys: pytest.CaptureFixture) -> None:
+    output = tmp_path / "collision.ofx"
+    with patch("pdf_to_ofx.ofx.generator.hashlib.sha256") as digest:
+        digest.return_value.hexdigest.return_value = "0" * 64
+        assert main([str(inter_pdf), "-o", str(output)]) == 1
+    assert not output.exists()
+    messages = capsys.readouterr()
+    assert messages.out == ""
+    assert messages.err == "Conversion failed: Duplicate OFX transaction identifier.\n"

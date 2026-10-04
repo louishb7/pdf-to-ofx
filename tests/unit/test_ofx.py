@@ -26,8 +26,8 @@ def test_provisional_ofx_structure_and_financial_values(statement: Statement) ->
     assert response.findtext("BANKACCTFROM/ACCTID") == "SYNTHETIC-DEMO"
     assert response.findtext("BANKACCTFROM/BANKID") == "000"
     assert response.findtext("BANKACCTFROM/ACCTTYPE") == "CHECKING"
-    assert response.findtext("BANKTRANLIST/DTSTART") == "20260901000000"
-    assert response.findtext("BANKTRANLIST/DTEND") == "20260905000000"
+    assert response.findtext("BANKTRANLIST/DTSTART") == "20260901"
+    assert response.findtext("BANKTRANLIST/DTEND") == "20260905"
     transactions = response.findall("./BANKTRANLIST/STMTTRN")
     assert len(transactions) == 4
     assert [transaction.findtext("TRNAMT") for transaction in transactions] == [
@@ -37,7 +37,7 @@ def test_provisional_ofx_structure_and_financial_values(statement: Statement) ->
         "CREDIT", "DEBIT", "DEBIT", "CREDIT",
     ]
     assert [transaction.findtext("DTPOSTED") for transaction in transactions] == [
-        "20260901000000", "20260902000000", "20260903000000", "20260905000000",
+        "20260901", "20260902", "20260903", "20260905",
     ]
     assert [transaction.findtext("MEMO") for transaction in transactions] == [
         transaction.description for transaction in statement.transactions
@@ -46,7 +46,7 @@ def test_provisional_ofx_structure_and_financial_values(statement: Statement) ->
     assert len(set(ids)) == 4
     assert all(identifier is not None and len(identifier) == 64 for identifier in ids)
     assert response.findtext("LEDGERBAL/BALAMT") == "1365.00"
-    assert response.findtext("LEDGERBAL/DTASOF") == "20260905000000"
+    assert response.findtext("LEDGERBAL/DTASOF") == "20260905"
 
 
 def test_export_and_fitids_are_deterministic(statement: Statement) -> None:
@@ -101,12 +101,12 @@ def test_account_metadata_is_configurable(statement: Statement) -> None:
     assert root.findtext(".//ACCTTYPE") == "SAVINGS"
 
 
-@pytest.mark.parametrize("profile", [
-    OFXProfile(bank_id=""), OFXProfile(account_id="BAD\x00ID"),
-    OFXProfile(account_type="UNKNOWN"), OFXProfile(currency="B1R"),
-    OFXProfile(currency="brl"),
+@pytest.mark.parametrize("changes", [
+    {"bank_id": ""}, {"account_id": "BAD\x00ID"},
+    {"account_type": "UNKNOWN"}, {"currency": "B1R"}, {"currency": "brl"},
 ])
-def test_invalid_profile_fails(statement: Statement, profile: OFXProfile) -> None:
+def test_invalid_profile_fails(statement: Statement, changes: dict) -> None:
+    profile = replace(OFXProfile(bank_id="999", account_id="DEMO"), **changes)
     with pytest.raises(OFXGenerationError):
         generate_ofx(statement, profile)
 
