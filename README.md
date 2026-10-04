@@ -5,7 +5,7 @@ statements and uses OFX in its Athenas workflow. Financial document contents are
 processed locally, without external services, APIs, telemetry, or persistence
 beyond the requested output file.
 
-## Current status: M0, M1, M2 and M3
+## Current status: M0 through M4 — Generic Statement Engine
 
 M0 proves a synthetic PDF → normalized statement → validation → OFX pipeline.
 M1 adds initial support for the **investigated Banco Inter digital layout**,
@@ -18,6 +18,10 @@ M2 hardens deterministic OFX export and tests its financial semantics against
 a small, fully fictitious public reference.
 M3 adds a small PySide6 desktop interface for selecting a PDF, reviewing a
 validated statement and explicitly saving its OFX. The CLI remains available.
+M4 adds positioned extraction, visual row reconstruction, portable structural
+profiles and conservative generic inference. The proven Inter and Synthetic
+parsers remain the default for their recognized layouts. Unknown institutions
+can now be interpreted structurally, with OFX export gated on explicit metadata.
 
 **Compatibilidade com Athenas ainda não validada.** The provisional OFX 1.02
 profile uses fictitious account metadata (`000` / `SYNTHETIC-DEMO`) only for the
@@ -75,8 +79,11 @@ Portuguese without document contents or tracebacks.
 The GUI and CLI call the same application services. Processing is local and
 does not send statements over the internet. There is no conversion history,
 automatic financial persistence, telemetry, editing, or persistent settings.
-Only the investigated Inter digital layout and the Synthetic Bank demonstration
-are supported. **Compatibilidade com Athenas ainda não validada.**
+The investigated Inter digital layout and Synthetic Bank demonstration remain
+the established end-to-end paths. Generic structures can also be recognized,
+but missing institution/account metadata prevents saving. There is no interface
+for supplying metadata or teaching layouts yet. This is not general support for
+every bank or every Inter statement. **Compatibilidade com Athenas ainda não validada.**
 
 Conversion is synchronous in M3: the public one/two-page fixtures took less than
 30 ms in the initial local measurement. Large PDFs may pause the interface;
@@ -127,7 +134,11 @@ Local PDF → extracted pages → deterministic layout detection → layout pars
           → immutable Statement/Transaction → validation → provisional OFX
 ```
 
-Bank parsers receive our own document model. The OFX generator receives domain
+Bank parsers receive our own document model. Extraction preserves both page text
+and immutable `Word` values with page, `x0`, `x1`, `top` and `bottom`. Third-party
+PDF objects never leave the extraction module. Coordinates use geometric numeric
+values; monetary values continue to use `Decimal` exclusively.
+The OFX generator receives domain
 values and also validates direct callers. Monetary values use `Decimal`, positive
 for credits and negative for debits, with exact cent reconciliation. Normalized
 transactions retain document order for balance validation; export sorts a copy.
@@ -151,6 +162,92 @@ It calls `application.convert.convert_pdf` and `application.export.write_ofx`;
 bank parsing, PDF extraction, financial validation and OFX generation remain in
 the existing core. The transaction table follows document order for reviewing
 running balances, while the export retains M2's canonical ordering.
+
+## Generic structural interpretation
+
+The `generic/` package has five small responsibilities: reconstruct rows,
+recognize exact dates/money/balance labels, represent a layout, interpret its
+transactions, and test candidate layouts against financial invariants. It has
+no bank-name detector or institution registry, and does not call `InterParser`.
+
+```text
+PDF → own positioned words → visual rows → monetary regions
+    → structural hypotheses → exact financial validation → Statement
+```
+
+`LayoutProfile` describes grouped/per-transaction dates, signed amounts or C/D
+markers, running/absent balances, monetary-region indices, page date continuity,
+footer row counts and geometric tolerances. It contains no financial document
+data. `to_json()` / `from_json()` are deterministic, versioned and reject unknown
+fields or duplicate keys. No profiles are written automatically.
+
+Tolerances are centralized in `generic.structure.Tolerances`: row centers may
+vary by 3 PDF points, and tokens within a monetary cell by 12 points. Both are
+explicitly configurable/tested. Fixed row anchors prevent adjacent lines from
+being merged by a chain of nearby words. Monetary regions are spatially adjacent
+token runs in left-to-right order; this version does not require globally aligned
+columns, since some PDFs position amounts immediately after variable descriptions.
+
+Inference enumerates the supported date/amount/balance modes and possible
+movement/balance assignments. A hypothesis must consume every body row and pass
+`validate_statement`, including each exact running-balance link and declared
+daily/statement balances. One successful hypothesis yields `success`; multiple
+yield `ambiguous`; none yields `unsupported`. Without an opening balance, at
+least two running-balance transactions are required for automatic inference.
+Absent-balance inference requires independent opening/closing reconciliation.
+Explicit profiles can interpret less evidence, but cannot bypass validation.
+
+Generic period and balance metadata are read from exact Portuguese financial
+labels, separately from the profile. A statement period must be declared or
+explicitly supplied; coverage is never guessed from the transaction dates.
+Missing opening/closing balances remain `None`. Account/institution identity is
+supplied independently through `StatementContext`; it is never inferred from
+column structure. Unrecognized financial header content is rejected. Automatic
+footer recognition is limited to contact roles; explicit footer counts still
+cannot suppress monetary or dated content. Unexpected body text is rejected,
+including incomplete transactions; arbitrary repeated descriptions are not
+treated as footers.
+
+Example of generic interpretation of the public fixture:
+
+```python
+from pathlib import Path
+from pdf_to_ofx.pdf.extractor import extract_pdf
+from pdf_to_ofx.generic.inference import InferenceStatus, infer_layout
+from pdf_to_ofx.generic.parser import GenericStatementParser
+
+document = extract_pdf(Path("tests/fixtures/inter/statement.pdf"))
+inference = infer_layout(document)
+if inference.status == InferenceStatus.SUCCESS:
+    assert inference.profile is not None
+    statement = GenericStatementParser().parse(document, inference.profile)
+    portable_profile = inference.profile.to_json()  # structural data only
+```
+
+`application.convert.parse_pdf` returns a validated `ParsedStatement` even when
+OFX metadata is missing. `convert_pdf` also generates OFX and therefore fails
+without that metadata. Both accept an explicit `layout_profile` and separate
+`context`. For known layouts, default calls preserve the specific parsers; a
+failure in a recognized parser is never silently bypassed. For an unknown bank,
+default parsing attempts generic inference. Supplying sufficient explicit
+identity allows generic conversion without registering another bank parser.
+The fictitious OFX fallback is restricted to the original Synthetic Bank layout,
+including when a generic context contains the reserved test marker.
+
+Public structural fixtures in `tests/fixtures/layouts/` contain only fictitious
+positioned cells. Tests generate reproducible PDFs for grouped dates plus signed
+amounts/running balances and per-row dates, including cross-page date context.
+The public Inter PDF is compared directly against the specific parser, with only
+account identity supplied separately; periods, transactions and balances come
+entirely from generic interpretation.
+
+Current limits: no debit/credit split columns, wrapped transaction descriptions,
+multiple transactions on one visual row, repeated body headers, arbitrary footer
+formats, other monetary locales, OCR, or unvalidated reverse chronological
+layouts. There is no wizard, profile storage, second real-bank support, or Windows
+packaging in M4. A future wizard can create profiles for the supported families
+and pass identity separately without changing the parser API; additional layout
+families require explicit capabilities and regression fixtures.
 
 OFX format choices and metadata live in `ofx/generator.py`. The output remains
 OFX 1.02 SGML with closed tags, declared `USASCII` / `CHARSET:NONE` and actual

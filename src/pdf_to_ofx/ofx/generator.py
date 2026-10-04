@@ -54,10 +54,13 @@ def _account_profile(account: BankAccount) -> OFXProfile:
 def _resolve_profile(statement: Statement, profile: OFXProfile | None) -> OFXProfile:
     if statement.account is not None and not isinstance(statement.account, BankAccount):
         raise OFXGenerationError("Invalid statement account metadata.")
+    # Generic interpretation must never gain demo defaults merely because an
+    # external identity context contains the reserved synthetic bank marker.
+    synthetic = statement.bank_id == "synthetic" and statement.layout_id == "synthetic-v1"
     if profile is None:
         if statement.account is not None:
             profile = _account_profile(statement.account)
-        elif statement.bank_id == "synthetic":
+        elif synthetic:
             profile = _SYNTHETIC_PROFILE
         else:
             raise OFXGenerationError("Real-bank export requires explicit account metadata.")
@@ -65,7 +68,7 @@ def _resolve_profile(statement: Statement, profile: OFXProfile | None) -> OFXPro
         raise OFXGenerationError("Invalid OFX export profile.")
     for value in (profile.bank_id, profile.account_id, profile.account_type, profile.currency):
         _check_text(value)
-    real_bank = statement.bank_id != "synthetic"
+    real_bank = not synthetic
     for value in (profile.branch_id, profile.organization, profile.institution_id):
         if real_bank or value is not None:
             _check_text(value)

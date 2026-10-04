@@ -5,7 +5,7 @@ from pathlib import Path
 import pdfplumber
 
 from pdf_to_ofx.domain.errors import PDFExtractionError
-from pdf_to_ofx.pdf.document import ExtractedDocument, ExtractedPage
+from pdf_to_ofx.pdf.document import ExtractedDocument, ExtractedPage, Word
 
 
 def extract_pdf(path: Path) -> ExtractedDocument:
@@ -20,7 +20,11 @@ def extract_pdf(path: Path) -> ExtractedDocument:
                     raise PDFExtractionError(
                         f"PDF page {number} has no usable text; scanned PDFs are unsupported."
                     )
-                pages.append(ExtractedPage(number, text))
+                words = tuple(Word(
+                    text=word["text"], x0=word["x0"], x1=word["x1"],
+                    top=word["top"], bottom=word["bottom"], page=number,
+                ) for word in page.extract_words())
+                pages.append(ExtractedPage(number, text, words))
             return ExtractedDocument(tuple(pages))
     except PDFExtractionError:
         raise
