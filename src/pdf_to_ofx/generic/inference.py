@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from itertools import groupby
-import re
 from typing import TYPE_CHECKING
 
 from pdf_to_ofx.domain.errors import (
@@ -14,15 +12,18 @@ from pdf_to_ofx.domain.errors import (
 from pdf_to_ofx.domain.evidence import AnalysisStatus, InferenceDiagnostic, Interpretation, default_diagnostic
 from pdf_to_ofx.generic.composition import resolve_hypotheses
 from pdf_to_ofx.generic.operators.candidates import OperatorFailure
-from pdf_to_ofx.generic.parser import GenericStatementParser, StatementContext, leading_date
+from pdf_to_ofx.generic.parser import GenericStatementParser, StatementContext
 from pdf_to_ofx.generic.profile import AmountMode, BalanceMode, DateMode, LayoutProfile
-from pdf_to_ofx.generic.semantics import has_financial_signal
-from pdf_to_ofx.generic.structure import Row, Tolerances, reconstruct_rows
+from pdf_to_ofx.generic.operators.pages import contact_footer_rows as _contact_footer_rows
+from pdf_to_ofx.generic.structure import Tolerances, reconstruct_rows
 from pdf_to_ofx.pdf.document import ExtractedDocument
 
 if TYPE_CHECKING:
     from pdf_to_ofx.generic.hypotheses import SearchBudget, StructuralHypothesis
     from pdf_to_ofx.generic.operators.scopes import FinancialScope
+    from pdf_to_ofx.generic.operators.amounts import MonetaryDiagnostic
+    from pdf_to_ofx.generic.operators.amounts import RoleDecision
+    from pdf_to_ofx.generic.search import SearchStep
 
 
 InferenceStatus = AnalysisStatus
@@ -41,30 +42,13 @@ class InferenceResult:
     hypotheses: tuple[StructuralHypothesis, ...] = ()
     budget_exhausted: bool = False
     diagnostic: InferenceDiagnostic | None = None
+    monetary_diagnostics: tuple[MonetaryDiagnostic, ...] = ()
+    role_decisions: tuple[RoleDecision, ...] = ()
+    search_trace: tuple[SearchStep, ...] = ()
 
     def __post_init__(self) -> None:
         if self.diagnostic is None:
             object.__setattr__(self, "diagnostic", default_diagnostic(self.status, budget_exhausted=self.budget_exhausted))
-
-
-def _contact_footer_rows(rows: tuple[Row, ...]) -> int:
-    counts = []
-    for _, grouped in groupby(rows, key=lambda row: row.page):
-        page = list(grouped)
-        last = page[-1]
-        # Recognize contact roles conservatively. Never memorize document text
-        # or infer arbitrary repeated descriptions as ignorable financial rows.
-        labels = set(re.findall(r"\b(?:sac|ouvidoria|telefone|atendimento)\b", last.text.casefold()))
-        count = 0
-        if len(labels) >= 2 and not has_financial_signal(last.text) and leading_date(last) is None:
-            count = 1
-            if len(page) >= 2:
-                previous = page[-2]
-                if (re.match(r"^(?:fale|contato|atendimento)\b", previous.text, re.IGNORECASE)
-                        and not has_financial_signal(previous.text) and leading_date(previous) is None):
-                    count = 2
-        counts.append(count)
-    return counts[0] if counts and len(set(counts)) == 1 else 0
 
 
 def infer_layout(document: ExtractedDocument, *, context: StatementContext | None = None,

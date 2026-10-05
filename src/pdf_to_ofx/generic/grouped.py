@@ -7,8 +7,6 @@ transaction keyword, external OFX or a guessed amount sign.
 from dataclasses import replace
 from datetime import date
 from decimal import Decimal
-from itertools import groupby
-import re
 
 from pdf_to_ofx.domain.errors import (
     RecognizedInvalidStatementError, StatementParseError, StatementValidationError,
@@ -218,45 +216,6 @@ def interpret_grouped_subtotals(document: ExtractedDocument, profile: LayoutProf
 
 
 def infer_grouped_profile(rows: tuple[Row, ...], tolerances: Tolerances) -> LayoutProfile | None:
-    """Derive only observed row counts/positions; mathematical proof follows."""
-    try:
-        pages = [list(group) for _, group in groupby(rows, key=lambda r: r.page)]
-        footer = 0
-        if len(pages) > 1 and all(_stamp(page[-1]) for page in pages):
-            footer = 1
-            while all(len(page) > footer and page[-footer - 1].text == pages[0][-footer - 1].text for page in pages):
-                footer += 1
-            texts = " ".join(r.text for r in pages[0][-footer:-1]).casefold()
-            if not re.search(r"\b(?:sac|ouvidoria|atendimento|contato)\b", texts):
-                return None
-            pages = [page[:-footer] for page in pages]
-        header = 0
-        if len(pages) > 1:
-            while all(len(page) > header and page[header].text == pages[0][header].text for page in pages):
-                if not _period(pages[0][header]) and (leading_date(pages[0][header])
-                        or has_financial_signal(pages[0][header].text)):
-                    break
-                header += 1
-        body = [row for index, page in enumerate(pages) for row in (page[header:] if index else page)]
-        start = next((i for i, row in enumerate(body) if not _period(row) and leading_date(row)), None)
-        if start is None or not any(_flow(row, tolerances) for row in body[start:]):
-            return None
-        movements = [(i, row) for i, row in enumerate(body[start:], start)
-                     if money_regions(row, tolerances) and not leading_date(row) and not _flow(row, tolerances)]
-        if not movements:
-            return None
-        transaction_left = min(row.words[0].x0 for _, row in movements)
-        candidates = [row.words[0].x0 for row in body[start:] if not money_regions(row, tolerances)
-                      and not leading_date(row) and row.words[0].x0 > transaction_left + tolerances.row_y]
-        continuation_left = min(candidates) if candidates else None
-        tail = movements[-1][0] + 1
-        while (continuation_left is not None and tail < len(body)
-               and abs(body[tail].words[0].x0 - continuation_left) <= tolerances.row_y):
-            tail += 1
-        notes = len(body) - tail
-        return LayoutProfile(DateMode.GROUPED, AmountMode.GROUP_SUBTOTAL, BalanceMode.ABSENT,
-                             balance_column=None, footer_rows=footer, tolerances=tolerances,
-                             transaction_left=transaction_left, continuation_left=continuation_left,
-                             repeated_header_rows=header, trailing_note_rows=notes)
-    except (StatementParseError, ValueError, IndexError):
-        return None
+    """Compatibility entry point for the extracted structural observation."""
+    from pdf_to_ofx.generic.operators.geometry import observe_grouped_geometry
+    return observe_grouped_geometry(rows, tolerances)

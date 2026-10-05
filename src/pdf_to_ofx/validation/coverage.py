@@ -1,6 +1,7 @@
 """Exact region ownership for the existing grammars, independent of balances."""
 
 from dataclasses import replace
+from collections.abc import Mapping
 
 from pdf_to_ofx.domain.errors import FinancialCoverageError
 from pdf_to_ofx.domain.evidence import (
@@ -8,6 +9,12 @@ from pdf_to_ofx.domain.evidence import (
     MonetaryAssignment, Provenance, SourceSpan, TransactionSource,
 )
 from pdf_to_ofx.domain.models import Chronology, Statement
+
+
+def source_has_role(source: SourceSpan | None, role: FinancialRole | str,
+                    assignments: Mapping[SourceSpan, MonetaryAssignment]) -> bool:
+    assignment = assignments.get(source) if source is not None else None
+    return assignment is not None and assignment.role == role
 
 
 class CoverageLedger:
@@ -67,8 +74,8 @@ class CoverageLedger:
         if self.expected != self.assignments.keys():
             raise FinancialCoverageError("Unclassified monetary regions remain in the document.")
         for checkpoint in statement.checkpoints:
-            if (checkpoint.source is None or self.assignments.get(checkpoint.source) !=
-                    MonetaryAssignment(checkpoint.source, FinancialRole(checkpoint.kind), None)):
+            if (not source_has_role(checkpoint.source, checkpoint.kind, self.assignments)
+                    or self.assignments[checkpoint.source].transaction_index is not None):
                 raise FinancialCoverageError("A checkpoint has no exclusive financial source.")
         movements = [a.transaction_index for a in self.assignments.values()
                      if a.role == FinancialRole.MOVEMENT]

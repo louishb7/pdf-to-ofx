@@ -10,6 +10,25 @@ from pdf_to_ofx.generic.structure import Row
 from pdf_to_ofx.generic.operators.candidates import OperatorFailure, _has_date, _period, _stamp, leading_date
 
 
+def contact_footer_rows(rows: tuple[Row, ...]) -> int:
+    """Recognize contact roles, never arbitrary repeated descriptions."""
+    counts = []
+    for _, grouped in groupby(rows, key=lambda row: row.page):
+        page = list(grouped)
+        last = page[-1]
+        labels = set(re.findall(r"\b(?:sac|ouvidoria|telefone|atendimento)\b", last.text.casefold()))
+        count = 0
+        if len(labels) >= 2 and not has_financial_signal(last.text) and leading_date(last) is None:
+            count = 1
+            if len(page) >= 2:
+                previous = page[-2]
+                if (re.match(r"^(?:fale|contato|atendimento)\b", previous.text, re.IGNORECASE)
+                        and not has_financial_signal(previous.text) and leading_date(previous) is None):
+                    count = 2
+        counts.append(count)
+    return counts[0] if counts and len(set(counts)) == 1 else 0
+
+
 def continue_pages(rows: tuple[Row, ...], profile: LayoutProfile) -> tuple[Row, ...]:
     if not rows:
         raise StatementParseError("Positioned statement rows are required.")

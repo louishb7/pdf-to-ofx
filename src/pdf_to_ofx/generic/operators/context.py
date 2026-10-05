@@ -10,7 +10,7 @@ from decimal import Decimal
 
 from pdf_to_ofx.domain.errors import StatementValidationError
 from pdf_to_ofx.domain.evidence import FinancialRole, MonetaryAssignment
-from pdf_to_ofx.generic.operators.amounts import MonetaryDomain
+from pdf_to_ofx.generic.operators.amounts import MonetaryDomain, RoleDecision
 from pdf_to_ofx.generic.operators.candidates import OperatorFailure, _period
 from pdf_to_ofx.generic.parser import StatementContext
 from pdf_to_ofx.generic.profile import LayoutProfile
@@ -35,6 +35,7 @@ SUMMARY = {
 
 def read_financial_context(header: tuple[Row, ...], profile: LayoutProfile,
                            supplied: StatementContext | None, coverage: VisualCoverage,
+                           role_decisions: list[RoleDecision] | None = None,
                            ) -> tuple[StatementContext, dict[str, Decimal], tuple[MonetaryDomain, ...]]:
     context = supplied or StatementContext()
     declarations: dict[str, date | Decimal] = {}
@@ -63,8 +64,11 @@ def read_financial_context(header: tuple[Row, ...], profile: LayoutProfile,
         # do not acquire guessed roles merely because their arithmetic might fit.
         if label.casefold().rstrip(":") == "saldo" and len(regions) == 1 and regions[0].end == len(row.words):
             region = regions[0]
-            domains.append(MonetaryDomain(coverage.span(row, region.start, region.end), region,
-                (FinancialRole.OPENING_BALANCE, FinancialRole.CLOSING_BALANCE)))
+            source = coverage.span(row, region.start, region.end)
+            roles = (FinancialRole.OPENING_BALANCE, FinancialRole.CLOSING_BALANCE)
+            domains.append(MonetaryDomain(source, region, roles,
+                tuple(RoleDecision(source, role, "balance_label", True, "unqualified_balance_label", (coverage.span(row),))
+                      for role in roles)))
             claimed.add(index)
             continue
         named = SUMMARY.get(label.casefold().rstrip(":"))
@@ -107,11 +111,23 @@ def read_financial_context(header: tuple[Row, ...], profile: LayoutProfile,
             if field:
                 declare(field, region.money.amount)
             coverage.monetary(header[value_index], region, role)
+            if role_decisions is not None:
+                source = coverage.span(header[value_index], region.start, region.end)
+                label_end = regions[0].start if value_index == index else len(row.words)
+                role_decisions.append(RoleDecision(source, role, "declaration_label", True, "exact_financial_label_binding",
+                    (coverage.span(row, 0, label_end), source)))
         claimed.update((index, value_index))
     for i, row in enumerate(header):
         if has_financial_signal(row.text) and i not in claimed:
-            capability = "monetary_role_domain_empty" if money_regions(row, profile.tolerances) else "monetary_token_incomplete"
-            raise OperatorFailure(capability, "Financial content has no supported complete role domain.")
+            regions = money_regions(row, profile.tolerances)
+            consumed = {i for region in regions for i in range(region.start, region.end)}
+            remaining = " ".join(w.text for i, w in enumerate(row.words) if i not in consumed)
+            if not regions or has_financial_signal(remaining) or any(
+                    w.text in {"+", "-"} for i, w in enumerate(row.words) if i not in consumed):
+                raise OperatorFailure("monetary_token_incomplete", "Financial content has incomplete monetary tokens.")
+            # Observation is complete. Ownership and relational generators run
+            # after transaction segmentation, before a role can be assigned.
+            domains.extend(MonetaryDomain(coverage.span(row, region.start, region.end), region, ()) for region in regions)
     context = replace(context, **declarations)
     if context.period_start is None or context.period_end is None:
         raise OperatorFailure("period_declaration_missing", "An explicit full-year statement period is required.")
@@ -128,7 +144,13 @@ def bind_context_roles(context: StatementContext, domains: tuple[MonetaryDomain,
     fields = {FinancialRole.OPENING_BALANCE: "opening_balance", FinancialRole.CLOSING_BALANCE: "closing_balance"}
     for domain, assignment in zip(domains, assignments):
         if (assignment.source != domain.source or assignment.role not in domain.roles
-                or assignment.transaction_index is not None or assignment.role not in fields):
+                or assignment.transaction_index is not None):
+            raise ConstraintViolation("monetary_domain_membership")
+        if assignment.role == FinancialRole.SPARSE_CHECKPOINT:
+            if domain.boundary is None:
+                raise ConstraintViolation("checkpoint_interval_missing")
+            continue
+        if assignment.role not in fields:
             raise ConstraintViolation("monetary_domain_membership")
         field, value = fields[assignment.role], domain.region.money.amount
         previous = getattr(context, field)

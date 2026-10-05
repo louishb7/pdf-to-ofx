@@ -1,7 +1,10 @@
 """Monetary roles and magnitude; no date or direction attribution."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from decimal import Decimal
+from enum import StrEnum
 import re
 
 from pdf_to_ofx.domain.evidence import FinancialRole, SourceSpan
@@ -10,12 +13,45 @@ from pdf_to_ofx.generic.operators.transactions import RowCandidate, TransactionS
 from pdf_to_ofx.generic.profile import AmountMode, BalanceMode, LayoutProfile
 from pdf_to_ofx.generic.semantics import MoneyRegion
 
+@dataclass(frozen=True, slots=True)
+class MonetaryObservation:
+    source: SourceSpan
+    region: MoneyRegion
+    row_position: int
+
+
+@dataclass(frozen=True, slots=True)
+class RoleDecision:
+    """Index-only structural authorization or refusal, never a financial score."""
+    source: SourceSpan
+    role: FinancialRole
+    generator: str
+    admitted: bool
+    rule: str
+    witnesses: tuple[SourceSpan, ...] = ()
+
+
+class EmptyDomainCause(StrEnum):
+    NO_STRUCTURAL_OWNER = "no_structural_owner"
+    ROLE_EVIDENCE_INSUFFICIENT = "role_evidence_insufficient"
+    CONFLICTING_STRUCTURAL_EVIDENCE = "conflicting_structural_evidence"
+    UNSUPPORTED_TRANSACTION_GEOMETRY = "unsupported_transaction_geometry"
+    UNSUPPORTED_CONTROL_STRUCTURE = "unsupported_control_structure"
+
+
+@dataclass(frozen=True, slots=True)
+class MonetaryDiagnostic:
+    source: SourceSpan
+    cause: EmptyDomainCause
+    decisions: tuple[RoleDecision, ...] = ()
+
 
 @dataclass(frozen=True, slots=True)
 class AmountRoles:
     movement: MoneyRegion
     magnitude: Decimal
     running_balance: MoneyRegion | None
+    role_evidence: tuple[RoleDecision, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,10 +66,20 @@ class MonetaryDomain:
     source: SourceSpan
     region: MoneyRegion
     roles: tuple[FinancialRole, ...]
+    decisions: tuple[RoleDecision, ...] = ()
+    # Document-order cut and recurring column, only for relational controls.
+    boundary: int | None = None
+    column: int | None = None
 
     def __post_init__(self) -> None:
         if len(set(self.roles)) != len(self.roles) or any(not isinstance(r, FinancialRole) for r in self.roles):
             raise ValueError("Monetary domains require distinct financial roles.")
+        if any(d.source != self.source or d.admitted and d.role not in self.roles for d in self.decisions):
+            raise ValueError("Role evidence must belong to its monetary domain.")
+        if (self.boundary is not None and (type(self.boundary) is not int or self.boundary < 0)
+                or self.column is not None and (type(self.column) is not int or self.column not in (0, 1))
+                or (self.boundary is None) != (self.column is None)):
+            raise ValueError("Relational domains require a document cut and a supported recurring column.")
 
 
 def infer_control_roles(candidate: RowCandidate, balance_mode: BalanceMode,
@@ -99,7 +145,8 @@ def amount_role_candidates(segment: TransactionSegment, geometry: LayoutProfile,
         profile = replace(geometry, balance_mode=BalanceMode.RUNNING if size == 2 else BalanceMode.ABSENT,
                           movement_column=column, balance_column=1 - column if size == 2 else None)
         try:
-            output.append(infer_amount_roles(segment, profile))
+            roles = infer_amount_roles(segment, profile)
         except OperatorFailure:
             continue
+        output.append(roles)
     return tuple(output)

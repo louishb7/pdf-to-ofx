@@ -1,9 +1,12 @@
 """Local semantic candidates: dates, declared periods and signed controls."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 import re
+from typing import TYPE_CHECKING
 
 from pdf_to_ofx.domain.errors import StatementParseError
 from pdf_to_ofx.generic.semantics import (
@@ -11,10 +14,15 @@ from pdf_to_ofx.generic.semantics import (
 )
 from pdf_to_ofx.generic.structure import Row, Tolerances
 
+if TYPE_CHECKING:
+    from pdf_to_ofx.generic.operators.amounts import MonetaryDiagnostic
+
 
 class OperatorFailure(StatementParseError):
-    def __init__(self, capability: str, reason: str) -> None:
+    def __init__(self, capability: str, reason: str,
+                 *, monetary_diagnostics: tuple[MonetaryDiagnostic, ...] = ()) -> None:
         self.capability = capability
+        self.monetary_diagnostics = monetary_diagnostics
         super().__init__(reason)
 
 

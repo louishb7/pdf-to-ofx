@@ -4,26 +4,35 @@ Each stage consumes candidates from the previous stage. This module never calls
 a complete legacy grammar, consults institution identity or ranks financial data.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass, replace
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 from pdf_to_ofx.domain.errors import AmbiguousStatementError, FinancialCoverageError, StatementParseError
 from pdf_to_ofx.domain.evidence import ChronologySource, DocumentRegion, FinancialRole, Interpretation, MonetaryAssignment, SourceSpan
 from pdf_to_ofx.domain.models import BalanceCheckpoint, Chronology, Statement, Transaction
-from pdf_to_ofx.generic.operators.amounts import AmountRoles, MonetaryDomain, infer_amount_roles, infer_control_roles
+from pdf_to_ofx.generic.operators.amounts import AmountRoles, MonetaryDomain, MonetaryObservation, RoleDecision, infer_amount_roles, infer_control_roles
 from pdf_to_ofx.generic.operators.candidates import OperatorFailure
 from pdf_to_ofx.generic.operators.chronology import infer_chronology
 from pdf_to_ofx.generic.operators.dates import DatedSegment, attribute_dates
 from pdf_to_ofx.generic.operators.directions import DirectionEvidence, infer_direction
 from pdf_to_ofx.generic.operators.financial import financial_evidence
 from pdf_to_ofx.generic.operators.pages import continue_pages
+from pdf_to_ofx.generic.operators.relations import generate_relational_domains, observe_money
+from pdf_to_ofx.generic.operators.ownership import control_role_evidence
 from pdf_to_ofx.generic.operators.scopes import FinancialScope, segment_scopes
 from pdf_to_ofx.generic.operators.transactions import RowCandidate, TransactionSegment, description_intervals, semantic_candidates, segment_transactions
 from pdf_to_ofx.generic.parser import StatementContext, read_context
 from pdf_to_ofx.generic.profile import AmountMode, BalanceMode, DateMode, LayoutProfile
-from pdf_to_ofx.generic.provenance import VisualCoverage
+from pdf_to_ofx.generic.provenance import VisualCoverage, canonical_sources
 from pdf_to_ofx.generic.structure import Row, reconstruct_rows
 from pdf_to_ofx.pdf.document import ExtractedDocument
+
+
+if TYPE_CHECKING:
+    from pdf_to_ofx.generic.hypotheses import StructuralHypothesis
 
 
 def source_key(sources: tuple[SourceSpan, ...]) -> tuple:
@@ -73,6 +82,8 @@ class CompositionInput:
     declarations: tuple[MonetaryAssignment, ...]
     profile: LayoutProfile
     monetary_domains: tuple[MonetaryDomain, ...] = ()
+    monetary_observations: tuple[MonetaryObservation, ...] = ()
+    role_evidence: tuple[RoleDecision, ...] = ()
 
 
 def bind_declarations(prepared: CompositionInput, assignments: tuple[MonetaryAssignment, ...]) -> CompositionInput:
@@ -107,14 +118,17 @@ def prepare_composition(document: ExtractedDocument, profile: LayoutProfile,
     if start is None:
         raise OperatorFailure("date_attribution", "No supported full-year dated transaction area was found.")
     # Declarations remain outside transaction segmentation, in the same scope.
-    body = tuple(c for c in candidates[start:] if c.kind != "balance_declaration")
+    declaration_kinds = {"balance_declaration"} if legacy_context else {"balance_declaration", "monetary_only"}
+    body = tuple(c for c in candidates[start:] if c.kind not in declaration_kinds)
     declarations = tuple(c.row for c in candidates[:start]) + tuple(
-        c.row for c in candidates[start:] if c.kind == "balance_declaration")
+        c.row for c in candidates[start:] if c.kind in declaration_kinds)
+    observations = observe_money(candidates, coverage)
     domains = ()
+    role_evidence = []
     try:
         if not legacy_context:
             from pdf_to_ofx.generic.operators.context import read_financial_context
-            context, totals, domains = read_financial_context(declarations, profile, context, coverage)
+            context, totals, domains = read_financial_context(declarations, profile, context, coverage, role_evidence)
         elif profile.amount_mode == AmountMode.GROUP_SUBTOTAL:
             from pdf_to_ofx.generic.grouped import _context
             context, totals = _context(declarations, profile, context, coverage)
@@ -129,8 +143,15 @@ def prepare_composition(document: ExtractedDocument, profile: LayoutProfile,
     sources = [domain.source for domain in domains]
     if (len(sources) != len(set(sources)) or any(s not in coverage.expected or s in coverage.assignments for s in sources)):
         raise FinancialCoverageError("Monetary domains repeat or contradict source ownership.")
+    if not legacy_context:
+        domains = generate_relational_domains(domains, observations, candidates, segments, coverage, profile)
+    evidence = tuple(role_evidence) if not legacy_context else tuple(
+        RoleDecision(a.source, a.role, "declaration_label", True, "explicit_declared_role", (a.source,))
+        for a in coverage.assignments.values())
+    if not legacy_context:
+        evidence += control_role_evidence(body, segments, coverage, profile)
     return CompositionInput(original, scopes[0], frames, body, segments, context,
-                            tuple(totals.items()), tuple(coverage.assignments.values()), profile, domains)
+                            tuple(totals.items()), tuple(coverage.assignments.values()), profile, domains, observations, evidence)
 
 
 def materialize_composition(prepared: CompositionInput, dated: tuple[DatedSegment, ...],
@@ -165,7 +186,7 @@ def materialize_composition(prepared: CompositionInput, dated: tuple[DatedSegmen
             coverage.monetary(head, roles.running_balance, FinancialRole.RUNNING_BALANCE, index)
         coverage.transaction(date_source, direction_source, *(coverage.span(c.row) for c in segment.rows))
         coverage.field_sources(index, date=date_source,
-            description=tuple(coverage.span(row, begin, end) for row, begin, end in description_regions),
+            description=canonical_sources(tuple(coverage.span(row, begin, end) for row, begin, end in description_regions)),
             amount=movement_source, balance=balance_source, direction=direction_source,
             direction_basis=direction.basis, economic_order=(None if chronology == Chronology.UNKNOWN else
                 len(dated) - index - 1 if chronology == Chronology.DESCENDING else index))
@@ -210,3 +231,26 @@ def interpret_composed(document: ExtractedDocument, profile: LayoutProfile,
     if chronology == Chronology.UNDECLARED:
         raise OperatorFailure("chronology_inference", "Economic order is unresolved; reverse ordering is not supported yet.")
     return materialize_composition(prepared, dated, amounts, directions, chronology)
+
+
+def structural_key(hypothesis: StructuralHypothesis) -> tuple:
+    """Material fields and original token ownership, without segment syntax."""
+    references = {id(row): span for row, span in zip(hypothesis.scope.rows, hypothesis.scope.region.spans, strict=True)}
+
+    def tokens(row, begin, end):
+        return replace(references[id(row)], word_start=begin, word_end=end)
+
+    output = []
+    for dated, roles, direction in zip(hypothesis.date_assignments, hypothesis.monetary_roles, hypothesis.directions, strict=True):
+        own = dated.candidate if dated.source_row.position == dated.segment.position else None
+        regions = description_intervals(dated.segment, own, reject_balance_heading=direction.basis != "signed_group_subtotal")
+        description = " ".join(w.text for row, begin, end in regions for w in row.words[begin:end])
+        output.append((dated.candidate.value, description, direction.apply(roles.magnitude),
+                       roles.running_balance.money.amount if roles.running_balance else None,
+                       source_key((tokens(dated.source_row.row, dated.candidate.start, dated.candidate.end),)),
+                       source_key(tuple(tokens(row, begin, end) for row, begin, end in regions)),
+                       source_key((tokens(dated.segment.rows[0].row, roles.movement.start, roles.movement.end),)),
+                       source_key((tokens(direction.source_row.row, direction.word_start, direction.word_end),))))
+    order = tuple(range(len(output)))
+    economic = None if hypothesis.chronology == Chronology.UNKNOWN else order[::-1] if hypothesis.chronology == Chronology.DESCENDING else order
+    return hypothesis.scope.region.region_id, tuple(output), economic, hypothesis.monetary_assignments

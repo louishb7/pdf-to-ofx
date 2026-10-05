@@ -31,6 +31,8 @@ def semantic_candidates(rows: tuple[Row, ...], profile: LayoutProfile) -> tuple[
         kind = "content"
         if _period(row):
             kind = "period"
+        elif len(amounts) == 1 and amounts[0].start == 0 and amounts[0].end == len(row.words):
+            kind = "monetary_only"
         elif (len(amounts) == 1 and amounts[0].end == len(row.words)
               and " ".join(w.text for w in row.words[:amounts[0].start]).casefold() == "saldo intermediário:"):
             kind = "checkpoint"
@@ -97,6 +99,8 @@ def description_intervals(segment: TransactionSegment, date: DateCandidate | Non
             start = None
     intervals.extend((candidate.row, 0, len(candidate.row.words)) for candidate in segment.rows[1:])
     text = " ".join(w.text for row, start, end in intervals for w in row.words[start:end])
+    if text.casefold().rstrip(":") in {"saldo", "subtotal"}:
+        raise OperatorFailure("monetary_role_domain_empty", "A control caption lacks a structural transaction owner.")
     if (not text or has_financial_signal(text)
             or reject_balance_heading and balance_labels(text) and text.casefold().startswith("saldo ")):
         raise OperatorFailure("transaction_segmentation", "Incomplete or unclassified transaction description.")

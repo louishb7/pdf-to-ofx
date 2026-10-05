@@ -5,7 +5,7 @@ statements and uses OFX in its Athenas workflow. Financial document contents are
 processed locally, without external services, APIs, telemetry, or persistence
 beyond the requested output file.
 
-## Current status: M0 through M7 — Composable structural operators and field provenance
+## Current status: M0 through M12 — Structural monetary roles and bounded hypotheses
 
 M0 proves a synthetic PDF → normalized statement → validation → OFX pipeline.
 M1 adds initial support for the **investigated Banco Inter digital layout**,
@@ -659,6 +659,87 @@ A new admissible balance domain can now resolve successfully, remain materially
 ambiguous or fail all constraints. Existing M8 regression expectations remain
 unchanged. The third private document is used only as a final diagnostic probe;
 this capability is not a claim that its previous blocker was role ambiguity.
+
+## M10–M12: relational roles, ordered controls and causal search traces
+
+The governing rule remains **structure authorizes candidates; constraints
+eliminate candidates**. Reconciliation never supplies a missing monetary role.
+The M9 baseline of 635 tests remains covered without changing its expectations.
+
+The pipeline now makes observation, candidate generation and ownership explicit:
+
+```text
+MoneyRegion + SourceSpan → MonetaryObservation → structural owners/relations
+    → MonetaryDomain / coupled AmountRoles → StructuralHypothesis
+    → partial constraints → materialization → validation + complete coverage
+```
+
+An isolated unlabelled cell can suggest a scope balance or intermediate
+checkpoint only when at least two complete transaction segments demonstrate a
+distinct recurring monetary column and an adjacent scope/date-group frontier.
+These are structural candidates, not selected balances. The chosen economic
+order must agree with the frontier, and every selected running balance must
+occupy that same column. An interior cell without a representable group cut
+remains unsupported. Unknown captions cannot borrow the relationship. No
+universal money-to-all-roles fallback, institution rule or scoring exists.
+
+`MonetaryDiagnostic` distinguishes missing owners, insufficient role evidence,
+conflicting geometry, unsupported transaction geometry and unsupported control
+structure. `RoleDecision` records the consulted generator, considered role,
+admission/refusal rule and source witnesses using indexes only. Explicit summary
+bindings also retain their label witnesses; local transaction candidates require
+a date, a description containing something other than date tokens, and direction
+evidence before expansion. Exact balance/subtotal captions cannot become
+transactions merely because a value of zero would reconcile.
+
+`ControlInterval` retains its source, role and movement occurrences and adds a
+half-open economic interval, balance references and optional credit/debit member
+indexes. Period controls can contain groups; explicitly represented subtotal
+hierarchies are valid. Crossing subtotal groups, cycles, reused owners, invalid
+anchors and foreign scope rows are rejected, including in partial assignments.
+Sharing an opening balance as a reference does not claim it twice. Distinct
+printed controls over the same movements corroborate one interval; they do not
+increase independence. An isolated balance boundary supplies no verified link.
+Set-only legacy callers remain conservative because they cannot demonstrate
+containment. Generating hierarchical subtotal groups from new PDF structures
+is still unsupported; ordered validation alone does not invent those groups.
+
+`hypotheses.py` is approximately 170 lines and orchestrates domains, expansion,
+constraints, materialization and material uniqueness. Geometry/frame observation
+now belongs to `operators/geometry.py` and `operators/pages.py`; legacy entry
+points delegate to these observations. The specific parsers and M4/M5/M7 oracles
+remain available. `StatementContext` is still defined in the legacy parser module
+as a shared value model; new inference does not call its legacy readers.
+
+`ConstraintFacts` inventories read-only structural facts once per analysis.
+Fixed/partial chronological contradictions, reserved source collisions, control
+origin and unassigned crossing groups can be rejected before building a
+Statement. `InferenceResult.search_trace` records parent states, source/role
+choices, elimination constraints and surviving control intervals without text or
+monetary values. Equivalent description span constructions are canonicalized.
+Material ambiguity is resolved before the minimum-evidence policy; stronger
+evidence cannot rank competing material interpretations.
+
+Limits remain **four admissible local alternatives and 128 visited states**.
+Local generation stops when an additional admissible choice exceeds its limit;
+incomplete segments never spend that limit. Global exhaustion still blocks an
+already visited survivor. Synthetic comparison against an isolated M9 snapshot
+reduced a calendar-controlled example from 10 to 8 visited states and missing
+descriptions from 6 to 0; the eight-domain exhaustion case remains at 128.
+
+```bash
+python -m pytest tests/generic/test_relational_roles.py tests/generic/test_control_topology.py tests/generic/test_search_discipline.py -q
+python -m pytest -q
+python tools/verify_m7_equivalence.py /local/first.pdf /local/second.pdf
+python -m compileall -q src tools tests
+git diff --check
+```
+
+The new positioned recipe `relational_balances/pages.json` and all added tests
+contain fictitious data. Limits remain one financial scope, digitally generated
+PDFs, the existing date/money vocabulary, and narrow transaction segmentation.
+FITID, OFX encoding/format, UI and dependencies are unchanged. Athenas acceptance
+is still a separate requirement.
 
 ## Private documents
 

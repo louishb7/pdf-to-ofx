@@ -36,3 +36,17 @@ class VisualCoverage(CoverageLedger):
     def monetary(self, row: Row, region: MoneyRegion, role: FinancialRole,
                  transaction_index: int | None = None) -> None:
         self.claim(self.span(row, region.start, region.end), role, transaction_index)
+
+
+def canonical_sources(sources: tuple[SourceSpan, ...]) -> tuple[SourceSpan, ...]:
+    """Merge adjacent token intervals; preserve gaps, order and occurrences."""
+    output = []
+    for source in sources:
+        if output:
+            previous = output[-1]
+            if ((previous.page, previous.row, previous.basis, previous.region_id, previous.word_end) ==
+                    (source.page, source.row, source.basis, source.region_id, source.word_start)):
+                output[-1] = replace(previous, word_end=source.word_end)
+                continue
+        output.append(source)
+    return tuple(output)
