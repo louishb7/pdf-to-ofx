@@ -32,6 +32,7 @@ class RoleDecision:
 
 
 class EmptyDomainCause(StrEnum):
+    MONETARY_TOKEN_INCOMPLETE = "monetary_token_incomplete"
     NO_STRUCTURAL_OWNER = "no_structural_owner"
     ROLE_EVIDENCE_INSUFFICIENT = "role_evidence_insufficient"
     CONFLICTING_STRUCTURAL_EVIDENCE = "conflicting_structural_evidence"

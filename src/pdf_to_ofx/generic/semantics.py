@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 import re
+from unicodedata import category
 
 from pdf_to_ofx.generic.structure import Row, Tolerances
 
@@ -62,7 +63,24 @@ class MoneyRegion:
     x1: float
 
 
-def money_regions(row: Row, tolerances: Tolerances) -> tuple[MoneyRegion, ...]:
+@dataclass(frozen=True, slots=True)
+class MoneyScan:
+    """Spatial candidates and unresolved expressions, in original word indexes.
+
+    An inventory is usable only when ``incomplete`` is empty. A detached affix
+    can invalidate the row without binding it across the token-gap tolerance.
+    """
+    regions: tuple[MoneyRegion, ...]
+    incomplete: tuple[tuple[int, int], ...]
+
+
+def scan_money_regions(row: Row, tolerances: Tolerances) -> MoneyScan:
+    """Do not expose a valid suffix of an unsupported monetary expression.
+
+    Integers alone are not money. A nearby numeric fragment or affix, however,
+    must not disappear when scanning a complete decimal candidate. Explicit
+    signs/currency delimit amounts from preceding description references.
+    """
     regions: list[MoneyRegion] = []
     index = 0
     while index < len(row.words):
@@ -81,7 +99,67 @@ def money_regions(row: Row, tolerances: Tolerances) -> tuple[MoneyRegion, ...]:
         else:
             regions.append(found)
             index = found.end
-    return tuple(regions)
+    covered = {i for region in regions for i in range(region.start, region.end)}
+    incomplete = []
+    complete = []
+
+    def adjacent(left: int, right: int) -> bool:
+        return row.words[right].x0 - row.words[left].x1 <= tolerances.token_gap
+
+    def affix(index: int) -> bool:
+        text = row.words[index].text
+        # These are refusal cues, not new supported currencies/directions.
+        return (text in {"+", "-", "−", "(", ")", "R$", "C", "D"}
+                or any(category(char) == "Sc" for char in text)
+                or re.fullmatch(r"[+−-]?[0-9.,_'’]+", text) is not None
+                or re.fullmatch(r"[A-Z]{2,3}", text) is not None)
+
+    for region in regions:
+        start, end = region.start, region.end
+        explicit_start = region.money.explicit_sign or row.words[start].text.startswith("R$")
+        while start and start - 1 not in covered and adjacent(start - 1, start):
+            previous = start - 1
+            # A separated reference before +amount/R$amount is description.
+            touching = row.words[start].x0 <= row.words[previous].x1
+            reference = re.fullmatch(r"[0-9.,_'’]+|[A-Z]{2,3}", row.words[previous].text) is not None
+            if not touching and (not affix(previous) or explicit_start and reference):
+                break
+            start = previous
+        while end < len(row.words) and end not in covered and adjacent(end - 1, end):
+            touching = row.words[end].x0 <= row.words[end - 1].x1
+            if not touching and not affix(end):
+                break
+            end += 1
+        if (start, end) != (region.start, region.end):
+            incomplete.append((start, end))
+        else:
+            complete.append(region)
+        # Outside token_gap this is not a binding. Keep the spatial candidate,
+        # but reject an inventory that would leave its sign/currency unconsumed.
+        if region.start and region.start - 1 not in covered:
+            prefix = row.words[region.start - 1].text
+            if prefix in {"+", "-", "−", "R$"} or any(category(char) == "Sc" for char in prefix):
+                incomplete.append((region.start - 1, end))
+
+    for index, word in enumerate(row.words):
+        if index not in covered and re.search(r"[0-9]+,[0-9]+", word.text):
+            start, end = index, index + 1
+            while start and start - 1 not in covered and adjacent(start - 1, start) and affix(start - 1):
+                start -= 1
+            while end < len(row.words) and end not in covered and adjacent(end - 1, end) and affix(end):
+                end += 1
+            incomplete.append((start, end))
+    merged = []
+    for start, end in sorted(set(incomplete)):
+        if merged and start < merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return MoneyScan(tuple(complete), tuple(merged))
+
+
+def money_regions(row: Row, tolerances: Tolerances) -> tuple[MoneyRegion, ...]:
+    return scan_money_regions(row, tolerances).regions
 
 
 def has_financial_signal(text: str) -> bool:

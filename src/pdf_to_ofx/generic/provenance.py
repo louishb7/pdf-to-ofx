@@ -3,7 +3,9 @@
 from dataclasses import replace
 
 from pdf_to_ofx.domain.evidence import FinancialRole, SourceSpan
-from pdf_to_ofx.generic.semantics import MoneyRegion, money_regions
+from pdf_to_ofx.generic.operators.amounts import EmptyDomainCause, MonetaryDiagnostic
+from pdf_to_ofx.generic.operators.candidates import OperatorFailure
+from pdf_to_ofx.generic.semantics import MoneyRegion, scan_money_regions
 from pdf_to_ofx.generic.structure import Row, Tolerances
 from pdf_to_ofx.validation.coverage import CoverageLedger
 
@@ -17,7 +19,13 @@ class VisualCoverage(CoverageLedger):
         for row in rows:
             counts[row.page] = counts.get(row.page, 0) + 1
             self.row_indexes[id(row)] = (row.page, counts[row.page])
-            expected.extend(self.span(row, region.start, region.end) for region in money_regions(row, tolerances))
+            scan = scan_money_regions(row, tolerances)
+            if scan.incomplete:
+                raise OperatorFailure("monetary_token_incomplete",
+                    "A monetary expression is not completely recognized.",
+                    monetary_diagnostics=tuple(MonetaryDiagnostic(self.span(row, start, end),
+                        EmptyDomainCause.MONETARY_TOKEN_INCOMPLETE) for start, end in scan.incomplete))
+            expected.extend(self.span(row, region.start, region.end) for region in scan.regions)
         super().__init__(tuple(expected))
 
     def span(self, row: Row, start: int = 0, end: int | None = None) -> SourceSpan:
