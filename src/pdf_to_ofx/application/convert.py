@@ -11,7 +11,7 @@ from pdf_to_ofx.domain.errors import (
     StatementParseError, StatementValidationError, UnresolvedCurrencyError, UnsupportedLayoutError,
 )
 from pdf_to_ofx.domain.evidence import AnalysisStatus, DocumentRegion, EvidenceReport, EvidenceStatus, FinancialRole, InferenceDiagnostic, Provenance, default_diagnostic
-from pdf_to_ofx.domain.models import BankAccount, Statement
+from pdf_to_ofx.domain.models import BankAccount, Chronology, Statement
 from pdf_to_ofx.generic.inference import infer_layout
 from pdf_to_ofx.generic.operators.candidates import OperatorFailure
 from pdf_to_ofx.generic.operators.amounts import MonetaryDiagnostic
@@ -41,6 +41,8 @@ class StatementAnalysis:
     monetary_diagnostics: tuple[MonetaryDiagnostic, ...] = ()
     failure_stage: str | None = None
     budget_exhausted: bool = False
+    # Chronologies actually visited by the existing SearchLedger, not guesses.
+    chronology_candidates: tuple[Chronology, ...] | None = None
 
     def __post_init__(self) -> None:
         if self.diagnostic is None:
@@ -112,6 +114,8 @@ def analyze_pdf(path: Path, *, layout_profile: LayoutProfile | None = None,
             monetary_diagnostics=inference.monetary_diagnostics,
             failure_stage=inference.failure_stage,
             budget_exhausted=inference.budget_exhausted,
+            chronology_candidates=tuple(sorted({step.chronology for step in inference.search_trace}))
+                if inference.search_trace else None,
         )
         if inference.status != AnalysisStatus.SUCCESS:
             return StatementAnalysis(inference.status, bank_name=name, reason=inference.reason,

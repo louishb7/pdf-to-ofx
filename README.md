@@ -5,7 +5,26 @@ statements and uses OFX in its Athenas workflow. Financial document contents are
 processed locally, without external services, APIs, telemetry, or persistence
 beyond the requested output file.
 
-## Current status: M0 through M12 — Structural monetary roles and bounded hypotheses
+## Development method: Corpus Lab V1
+
+**Banks are sampling sources, not parser boundaries.** Development now measures
+coverage over a growing local corpus of structurally diverse documents. Corpus
+Lab observes the existing application engine and groups failures by structural
+capability and failure stage; institution metadata never selects interpretation.
+
+```bash
+pdf-to-ofx corpus analyze .corpus/manifests/corpus.jsonl
+pdf-to-ofx corpus report .corpus/reports/latest.jsonl
+pdf-to-ofx corpus report .corpus/reports/latest.jsonl --json
+```
+
+The entire `.corpus/` tree is ignored by Git. No PDFs are moved or downloaded.
+Batch analysis writes content-free JSONL diagnostics without exporting OFX;
+duplicates are analyzed once per actual SHA-256. See
+[Corpus Lab V1](docs/corpus-lab-v1.md) for the manifest schema, fingerprint
+definitions, privacy boundary, capability matrix and fictitious example.
+
+## Historical milestones: M0 through M12 — Structural monetary roles and bounded hypotheses
 
 M0 proves a synthetic PDF → normalized statement → validation → OFX pipeline.
 M1 adds initial support for the **investigated Banco Inter digital layout**,

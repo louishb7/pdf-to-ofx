@@ -28,3 +28,6 @@ Thumbs.db
 
 # Private test files
 tests/private_fixtures/
+
+# Local corpus: originals, manifests and diagnostic reports
+/.corpus/

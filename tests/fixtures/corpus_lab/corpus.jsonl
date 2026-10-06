@@ -1,0 +1,6 @@
+{"schema_version":1,"corpus_id":"fictitious-success","local_path":"../raw/success.pdf","sha256":null,"source_url":null,"source_kind":"synthetic","institution":"INSTITUICAO FICTICIA PRIVACIDADE","country":null,"region":null,"document_kind":"bank_statement","language":"pt","public_or_private":"public","retrieved_at":null,"notes":"METADADOS FICTICIOS PARA TESTES"}
+{"schema_version":1,"corpus_id":"fictitious-unsupported","local_path":"../raw/unsupported.pdf","source_kind":"synthetic","public_or_private":"public"}
+{"schema_version":1,"corpus_id":"fictitious-missing","local_path":"../raw/missing.pdf","source_kind":"synthetic","public_or_private":"public"}
+{"schema_version":1,"corpus_id":"fictitious-ambiguous","local_path":"../raw/ambiguous.pdf","source_kind":"synthetic","public_or_private":"public"}
+{"schema_version":1,"corpus_id":"fictitious-invalid","local_path":"../raw/invalid.pdf","source_kind":"synthetic","public_or_private":"public"}
+{"schema_version":1,"corpus_id":"fictitious-duplicate","local_path":"../raw/duplicate.pdf","source_kind":"synthetic","public_or_private":"public"}

@@ -3,13 +3,17 @@
 from collections import Counter
 from pathlib import Path
 
-from pdf_to_ofx.application.convert import analyze_pdf, assess_export_readiness
+from pdf_to_ofx.application.convert import StatementAnalysis, analyze_pdf, assess_export_readiness
 from pdf_to_ofx.domain.evidence import AnalysisStatus
 
 
 def diagnose_pdf(path: Path) -> dict[str, object]:
     """Return bounded technical evidence, never amounts, identity or descriptions."""
-    analysis = analyze_pdf(path)
+    return diagnose_analysis(analyze_pdf(path))
+
+
+def diagnose_analysis(analysis: StatementAnalysis) -> dict[str, object]:
+    """Project an existing analysis without running the engine again."""
     diagnostics = analysis.monetary_diagnostics
     return {
         "status": analysis.status.value,

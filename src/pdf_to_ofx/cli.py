@@ -12,6 +12,9 @@ from pdf_to_ofx.domain.errors import ConversionError
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "corpus":
+        from pdf_to_ofx.corpus.cli import main as corpus_main
+        return corpus_main(argv[1:])
     if argv and argv[0] == "diagnose":
         from pdf_to_ofx.application.diagnose import diagnose_pdf
 
