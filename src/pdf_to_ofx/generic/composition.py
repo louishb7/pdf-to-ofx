@@ -137,10 +137,12 @@ def prepare_composition(document: ExtractedDocument, profile: LayoutProfile,
         else:
             context = read_context(declarations, profile, context, coverage)
             totals = {}
-    except OperatorFailure:
+    except OperatorFailure as error:
+        if error.stage is None:
+            error.stage = "financial_context"
         raise
     except StatementParseError as error:
-        raise OperatorFailure("financial_context", str(error)) from error
+        raise OperatorFailure("financial_context", str(error), stage="financial_context") from error
     segments = segment_transactions(body, profile)
     sources = [domain.source for domain in domains]
     if (len(sources) != len(set(sources)) or any(s not in coverage.expected or s in coverage.assignments for s in sources)):

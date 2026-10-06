@@ -77,11 +77,14 @@ def infer_hypotheses(document: ExtractedDocument, *, profile: LayoutProfile | No
         return InferenceResult(AnalysisStatus.AMBIGUOUS, None, "Financial scope selection is not unique.",
             blocking_capabilities=("scope_selection",), candidate_hypotheses=len(scope_candidates))
     context = replace(context, bank_id="unknown", account=None) if context else None
+    stage = "geometry"
     try:
         geometry = observe_geometry(document, profile, tolerances)
+        stage = "structural_composition"
         prepared = prepare_composition(document, geometry, context=context, legacy_context=False)
         if scope_candidates and scope_candidates[0].region != prepared.scope.region:
             raise OperatorFailure("scope_boundary_unknown", "The supplied scope differs from the complete analyzed region.")
+        stage = "local_candidates"
         local = transaction_candidates(prepared, profile, budget.max_local_alternatives)
         dates, amounts = local.dates, local.amounts
         facts = observe_constraint_facts(prepared)
@@ -96,8 +99,8 @@ def infer_hypotheses(document: ExtractedDocument, *, profile: LayoutProfile | No
     except StatementParseError as error:
         capability = error.capability if isinstance(error, OperatorFailure) else "visual_structure"
         status = AnalysisStatus.INVALID if capability == "pagination_consistency" else AnalysisStatus.UNSUPPORTED
-        return InferenceResult(status, None, "Structural declarations are inconsistent." if status == AnalysisStatus.INVALID
-            else "Required structural evidence is unavailable.", blocking_capabilities=(capability,),
+        return InferenceResult(status, None, str(error), blocking_capabilities=(capability,),
+            failure_stage=error.stage or stage if isinstance(error, OperatorFailure) else stage,
             monetary_diagnostics=error.monetary_diagnostics if isinstance(error, OperatorFailure) else ())
     if local.over_budget:
         return InferenceResult(AnalysisStatus.AMBIGUOUS, None, "Local hypothesis budget exceeded.", blocking_capabilities=("search_budget",), budget_exhausted=True)

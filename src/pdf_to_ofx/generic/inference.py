@@ -45,6 +45,7 @@ class InferenceResult:
     monetary_diagnostics: tuple[MonetaryDiagnostic, ...] = ()
     role_decisions: tuple[RoleDecision, ...] = ()
     search_trace: tuple[SearchStep, ...] = ()
+    failure_stage: str | None = None
 
     def __post_init__(self) -> None:
         if self.diagnostic is None:

@@ -20,8 +20,10 @@ if TYPE_CHECKING:
 
 class OperatorFailure(StatementParseError):
     def __init__(self, capability: str, reason: str,
-                 *, monetary_diagnostics: tuple[MonetaryDiagnostic, ...] = ()) -> None:
+                 *, monetary_diagnostics: tuple[MonetaryDiagnostic, ...] = (),
+                 stage: str | None = None) -> None:
         self.capability = capability
+        self.stage = stage
         self.monetary_diagnostics = monetary_diagnostics
         super().__init__(reason)
 

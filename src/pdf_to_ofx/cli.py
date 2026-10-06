@@ -1,6 +1,7 @@
 """Developer CLI; displays summaries without transaction descriptions."""
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -10,6 +11,16 @@ from pdf_to_ofx.domain.errors import ConversionError
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "diagnose":
+        from pdf_to_ofx.application.diagnose import diagnose_pdf
+
+        parser = argparse.ArgumentParser(description="Diagnose a local PDF without exposing financial contents or writing OFX.")
+        parser.add_argument("input", type=Path, help="Local statement PDF")
+        args = parser.parse_args(argv[1:])
+        report = diagnose_pdf(args.input)
+        print(json.dumps(report, indent=2, ensure_ascii=False))
+        return 0 if report["approved"] else 1
     parser = argparse.ArgumentParser(description="Convert a supported digital statement PDF to provisional OFX.")
     parser.add_argument("input", type=Path, help="Local text-based statement PDF")
     parser.add_argument("-o", "--output", type=Path, help="Output file (default: input with .ofx suffix)")

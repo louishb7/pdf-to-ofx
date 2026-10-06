@@ -14,6 +14,7 @@ from pdf_to_ofx.domain.evidence import AnalysisStatus, DocumentRegion, EvidenceR
 from pdf_to_ofx.domain.models import BankAccount, Statement
 from pdf_to_ofx.generic.inference import infer_layout
 from pdf_to_ofx.generic.operators.candidates import OperatorFailure
+from pdf_to_ofx.generic.operators.amounts import MonetaryDiagnostic
 from pdf_to_ofx.generic.parser import StatementContext
 from pdf_to_ofx.generic.profile import LayoutProfile
 from pdf_to_ofx.ofx.generator import OFXProfile, account_profile, generate_ofx, validate_ofx_export
@@ -35,6 +36,11 @@ class StatementAnalysis:
     blocking_capabilities: tuple[str, ...] = ()
     candidate_hypotheses: int = 0
     diagnostic: InferenceDiagnostic | None = None
+    explored_hypotheses: int = 0
+    pruned_constraints: tuple[tuple[str, int], ...] = ()
+    monetary_diagnostics: tuple[MonetaryDiagnostic, ...] = ()
+    failure_stage: str | None = None
+    budget_exhausted: bool = False
 
     def __post_init__(self) -> None:
         if self.diagnostic is None:
@@ -99,11 +105,19 @@ def analyze_pdf(path: Path, *, layout_profile: LayoutProfile | None = None,
                     if value is not None and value != getattr(baseline.statement, field):
                         raise StatementValidationError("Conflicting statement period or balance declarations.")
         inference = infer_layout(document, context=financial_context, profile=layout_profile)
+        search_details = dict(
+            candidate_hypotheses=inference.candidate_hypotheses,
+            explored_hypotheses=inference.explored_hypotheses,
+            pruned_constraints=inference.pruned_constraints,
+            monetary_diagnostics=inference.monetary_diagnostics,
+            failure_stage=inference.failure_stage,
+            budget_exhausted=inference.budget_exhausted,
+        )
         if inference.status != AnalysisStatus.SUCCESS:
             return StatementAnalysis(inference.status, bank_name=name, reason=inference.reason,
                 ambiguities=(inference.reason,) if inference.status == AnalysisStatus.AMBIGUOUS else (),
                 blocking_capabilities=inference.blocking_capabilities,
-                candidate_hypotheses=inference.candidate_hypotheses, diagnostic=inference.diagnostic)
+                diagnostic=inference.diagnostic, **search_details)
         assert inference.interpretation is not None
         interpretation = inference.interpretation
         layout_profile = inference.profile
@@ -120,10 +134,11 @@ def analyze_pdf(path: Path, *, layout_profile: LayoutProfile | None = None,
             reason = "Independent financial evidence or complete monetary coverage is insufficient."
             return StatementAnalysis(AnalysisStatus.AMBIGUOUS, evidence=interpretation.evidence,
                 provenance=interpretation.provenance, layout_profile=layout_profile,
-                bank_name=name, reason=reason, ambiguities=(reason,), diagnostic=InferenceDiagnostic.INSUFFICIENT_EVIDENCE)
+                bank_name=name, reason=reason, ambiguities=(reason,), diagnostic=InferenceDiagnostic.INSUFFICIENT_EVIDENCE,
+                **search_details)
         return StatementAnalysis(AnalysisStatus.SUCCESS, interpretation.statement,
             interpretation.evidence, interpretation.provenance, layout_profile, name,
-            candidate_hypotheses=inference.candidate_hypotheses)
+            **search_details)
     except PDFExtractionError:
         return StatementAnalysis(AnalysisStatus.UNSUPPORTED, reason="PDF contains no usable digital text or cannot be read.",
                                  error_type=PDFExtractionError)

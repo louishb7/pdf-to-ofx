@@ -5,6 +5,7 @@ from dataclasses import replace
 from pdf_to_ofx.domain.evidence import FinancialRole, SourceSpan
 from pdf_to_ofx.generic.operators.amounts import EmptyDomainCause, MonetaryDiagnostic
 from pdf_to_ofx.generic.operators.candidates import OperatorFailure
+from pdf_to_ofx.generic.operators.punctuation import description_separators
 from pdf_to_ofx.generic.semantics import MoneyRegion, scan_money_regions
 from pdf_to_ofx.generic.structure import Row, Tolerances
 from pdf_to_ofx.validation.coverage import CoverageLedger
@@ -17,15 +18,19 @@ class VisualCoverage(CoverageLedger):
         counts: dict[int, int] = {}
         expected = []
         observed = []
+        separators = description_separators(rows, tolerances)
         for row in rows:
             counts[row.page] = counts.get(row.page, 0) + 1
             self.row_indexes[id(row)] = (row.page, counts[row.page])
             scan = scan_money_regions(row, tolerances)
-            if scan.incomplete:
+            incomplete = tuple((start, end) for start, end in scan.incomplete
+                               if (id(row), start, end) not in separators)
+            if incomplete:
                 raise OperatorFailure("monetary_token_incomplete",
                     "A monetary expression is not completely recognized.",
+                    stage="monetary_inventory",
                     monetary_diagnostics=tuple(MonetaryDiagnostic(self.span(row, start, end),
-                        EmptyDomainCause.MONETARY_TOKEN_INCOMPLETE) for start, end in scan.incomplete))
+                        EmptyDomainCause.MONETARY_TOKEN_INCOMPLETE) for start, end in incomplete))
             expected.extend(self.span(row, region.start, region.end) for region in scan.regions)
             observed.extend((self.span(row, region.start, region.end), region.money.currency)
                             for region in scan.regions if region.money.currency is not None)

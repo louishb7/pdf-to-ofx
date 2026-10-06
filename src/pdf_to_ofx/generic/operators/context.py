@@ -10,7 +10,7 @@ from decimal import Decimal
 
 from pdf_to_ofx.domain.errors import StatementValidationError
 from pdf_to_ofx.domain.evidence import FinancialRole, MonetaryAssignment
-from pdf_to_ofx.generic.operators.amounts import MonetaryDomain, RoleDecision
+from pdf_to_ofx.generic.operators.amounts import EmptyDomainCause, MonetaryDiagnostic, MonetaryDomain, RoleDecision
 from pdf_to_ofx.generic.operators.candidates import OperatorFailure, _period
 from pdf_to_ofx.generic.parser import StatementContext
 from pdf_to_ofx.generic.profile import LayoutProfile
@@ -124,7 +124,16 @@ def read_financial_context(header: tuple[Row, ...], profile: LayoutProfile,
             remaining = " ".join(w.text for i, w in enumerate(row.words) if i not in consumed)
             if not regions or has_financial_signal(remaining) or any(
                     w.text in {"+", "-"} for i, w in enumerate(row.words) if i not in consumed):
-                raise OperatorFailure("monetary_token_incomplete", "Financial content has incomplete monetary tokens.")
+                caption = not regions and all(w.text.casefold() in {
+                    "data", "lançamento", "lançamentos", "histórico", "descrição", "valor", "saldo", "(r$)",
+                } for w in row.words)
+                raise OperatorFailure(
+                    "financial_caption_ownership" if caption else "monetary_token_incomplete",
+                    "A currency-bearing column caption has no supported declaration owner." if caption
+                    else "Financial content has incomplete monetary tokens.",
+                    monetary_diagnostics=(MonetaryDiagnostic(coverage.span(row),
+                        EmptyDomainCause.UNSUPPORTED_CONTROL_STRUCTURE if caption
+                        else EmptyDomainCause.MONETARY_TOKEN_INCOMPLETE),))
             # Observation is complete. Ownership and relational generators run
             # after transaction segmentation, before a role can be assigned.
             domains.extend(MonetaryDomain(coverage.span(row, region.start, region.end), region, ()) for region in regions)

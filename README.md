@@ -741,6 +741,38 @@ PDFs, the existing date/money vocabulary, and narrow transaction segmentation.
 FITID, OFX encoding/format, UI and dependencies are unchanged. Athenas acceptance
 is still a separate requirement.
 
+## Local diagnosis and real-document acceptance
+
+```bash
+pdf-to-ofx diagnose /local/statement.pdf
+QT_QPA_PLATFORM=offscreen python tools/verify_private_acceptance.py /local/first.pdf /local/second.pdf
+```
+
+`diagnose` uses `analyze_pdf`, the GUI's normal analysis entry point. Its bounded
+JSON output contains status, the concrete failure reason/stage, blocking
+capabilities, generated/explored hypotheses, search exhaustion, the ten leading
+elimination constraints, and monetary diagnostic counts with up to eight source
+locations. It excludes filenames, identity, monetary values and descriptions;
+it writes no OFX. Exit code 0 means approved analysis, not necessarily export
+readiness. Rejected analysis returns 1. The existing conversion CLI is unchanged.
+
+The acceptance helper loads each supplied PDF into the existing GUI, checks
+readiness/export controls, and compares first/middle/last approved transactions
+with their original PDF date, amount, direction and description sources. It
+returns 1 if any document cannot complete normal GUI export. An explicit
+`--show-financial-summary` adds the period and closing balance to its output.
+Neither helper stores document contents or supplies missing account metadata.
+
+Wrapped description separators are recognized only with a signed flow owner,
+three distinct columns, repeated separator punctuation in the description cell,
+and an aligned continuation line. Monetary values and separator provenance are
+preserved; the existing coverage and exact reconciliation constraints still run.
+The public `wrapped_description_separators` recipe exercises this structure.
+`snapshot_and_dated_table` reproduces an unsupported combination of a current
+account snapshot, account limits, currency column captions and a dated table.
+Its out-of-period movement must not be silently redated or discarded. Both
+recipes are entirely fictitious. Export still requires explicit account identity.
+
 ## Private documents
 
 Never commit real bank statements or upload confidential fixtures. Committed

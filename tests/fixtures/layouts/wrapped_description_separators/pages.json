@@ -1,0 +1,16 @@
+{
+  "pages": [[
+    {"y": 40, "cells": [[35, "DOCUMENTO INTEIRAMENTE FICTÍCIO"]]},
+    {"y": 60, "cells": [[35, "Período: 01/02/2028 a 29/02/2028"]]},
+    {"y": 80, "cells": [[35, "Saldo inicial: R$ 42,00"]]},
+    {"y": 100, "cells": [[35, "Saldo final: R$ 55,10"]]},
+    {"y": 120, "cells": [[35, "Total de entradas: +17,25"]]},
+    {"y": 140, "cells": [[35, "Total de saídas: -4,15"]]},
+    {"y": 180, "cells": [[35, "02 FEV 2028"], [110, "Total de entradas"], [500, "+17,25"]]},
+    {"y": 205, "cells": [[110, "ITEM ALFA"], [240, "REFERENCIA - UNIDADE -"], [500, "17,25"]]},
+    {"y": 225, "cells": [[240, "COMPLEMENTO FICTICIO"]]},
+    {"y": 260, "cells": [[35, "03 FEV 2028"], [110, "Total de saídas"], [500, "-4,15"]]},
+    {"y": 285, "cells": [[110, "ITEM BETA"], [240, "DOCUMENTO - EXEMPLO -"], [500, "4,15"]]},
+    {"y": 305, "cells": [[240, "DETALHE INVENTADO"]]}
+  ]]
+}
