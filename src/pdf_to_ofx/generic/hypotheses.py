@@ -6,7 +6,7 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from pdf_to_ofx.domain.errors import (
-    AmbiguousStatementError, FinancialCoverageError, RecognizedInvalidStatementError,
+    AmbiguousStatementError, CurrencyConflictError, FinancialCoverageError, RecognizedInvalidStatementError,
     StatementParseError, StatementValidationError,
 )
 from pdf_to_ofx.domain.evidence import AnalysisStatus, InferenceDiagnostic, Interpretation, MonetaryAssignment, SourceSpan
@@ -85,6 +85,9 @@ def infer_hypotheses(document: ExtractedDocument, *, profile: LayoutProfile | No
         local = transaction_candidates(prepared, profile, budget.max_local_alternatives)
         dates, amounts = local.dates, local.amounts
         facts = observe_constraint_facts(prepared)
+    except CurrencyConflictError as error:
+        return InferenceResult(AnalysisStatus.INVALID, None, "Contradictory currencies were observed in one financial scope.",
+                               blocking_capabilities=(error.capability,))
     except FinancialCoverageError:
         return InferenceResult(AnalysisStatus.INVALID, None, "Financial regions lack complete ownership.", blocking_capabilities=("financial_coverage",))
     except StatementValidationError:

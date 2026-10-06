@@ -197,7 +197,8 @@ def interpret_grouped_subtotals(document: ExtractedDocument, profile: LayoutProf
     debits = _sum([t.amount for t in transactions if t.amount < 0])
     statement = Statement(context.bank_id, "generic-structural-v1", context.period_start,
                           context.period_end, context.opening_balance, context.closing_balance,
-                          tuple(transactions), context.account, chronology=Chronology.ASCENDING)
+                          tuple(transactions), context.account, chronology=Chronology.ASCENDING,
+                          currency=context.currency)
     try:
         if not all(subtotal_checks):
             raise StatementValidationError("Transactions do not reconcile with their declared flow subtotal.")

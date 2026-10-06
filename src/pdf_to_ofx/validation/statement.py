@@ -6,6 +6,7 @@ from decimal import Context, Decimal, localcontext
 from pdf_to_ofx.domain.errors import StatementValidationError
 from pdf_to_ofx.domain.evidence import EvidenceReport, EvidenceStatus
 from pdf_to_ofx.domain.models import BalanceCheckpoint, Chronology, Statement, Transaction
+from pdf_to_ofx.domain.currency import Currency
 from pdf_to_ofx.validation.checkpoints import check_checkpoints
 
 
@@ -32,6 +33,9 @@ def validate_domain(statement: Statement) -> None:
     if (not isinstance(statement.chronology, Chronology)
             or type(statement.running_balances_required) is not bool):
         raise StatementValidationError("Invalid structural validation declarations.")
+    # Currency is not arithmetic: all values already share the statement scope.
+    if statement.currency is not None and not isinstance(statement.currency, Currency):
+        raise StatementValidationError("Statement currency must be an explicit Currency.")
     for index, transaction in enumerate(statement.transactions, start=1):
         if not isinstance(transaction, Transaction):
             raise StatementValidationError(f"Transaction {index} is not a Transaction.")

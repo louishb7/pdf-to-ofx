@@ -6,10 +6,14 @@ from decimal import Decimal
 import re
 from unicodedata import category
 
+from pdf_to_ofx.domain.currency import Currency
 from pdf_to_ofx.generic.structure import Row, Tolerances
 
 NUMBER = r"(?:0|[1-9][0-9]{0,2}(?:\.[0-9]{3})*|[1-9][0-9]*),[0-9]{2}"
-MONEY = re.compile(rf"(?P<sign>[+-]?)\s*(?:R\$\s*)?(?P<number>{NUMBER})(?:\s+(?P<marker>[CD]))?")
+MONEY = re.compile(rf"(?P<sign>[+-]?)\s*(?:(?P<symbol>R\$)\s*)?(?P<number>{NUMBER})(?:\s+(?P<marker>[CD]))?")
+# Lexical evidence only: the symbol proves a currency, not a number format or a country.
+# Widening this table belongs to the lexical layer (I2/I3).
+CURRENCY_SYMBOLS = {"R$": Currency("BRL")}
 NUMERIC_DATE = re.compile(r"([0-9]{2})/([0-9]{2})/([0-9]{4})")
 LONG_DATE = re.compile(r"([0-9]{1,2}) de ([a-zç]+) de ([0-9]{4})", re.IGNORECASE)
 SHORT_MONTH_DATE = re.compile(r"([0-9]{1,2}) ([a-zç]{3}) ([0-9]{4})", re.IGNORECASE)
@@ -39,6 +43,8 @@ class Money:
     amount: Decimal
     marker: str | None
     explicit_sign: bool
+    # Observed currency only; ``None`` is "not demonstrated by this token".
+    currency: Currency | None = None
 
 
 def parse_money(text: str) -> Money | None:
@@ -51,7 +57,7 @@ def parse_money(text: str) -> Money | None:
     amount = Decimal(match["number"].replace(".", "").replace(",", "."))
     if sign == "-" or marker == "D":
         amount = amount.copy_negate()
-    return Money(amount, marker, bool(sign))
+    return Money(amount, marker, bool(sign), CURRENCY_SYMBOLS.get(match["symbol"]))
 
 
 @dataclass(frozen=True, slots=True)

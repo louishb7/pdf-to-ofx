@@ -25,6 +25,15 @@ class RecognizedInvalidStatementError(StatementValidationError):
     """A fully consumed structural hypothesis failed financial validation."""
 
 
+class InvalidCurrencyError(StatementValidationError, ValueError):
+    """A currency code is not a canonical three-letter uppercase code."""
+
+
+class CurrencyConflictError(StatementValidationError):
+    """One financial scope contains contradictory currencies; never converted."""
+    capability = "currency_conflict"
+
+
 class FinancialCoverageError(StatementParseError):
     """Document monetary regions have missing, duplicate or invalid ownership."""
 
@@ -43,3 +52,11 @@ class MissingOFXMetadataError(OFXGenerationError):
 
 class MissingOFXRequirementsError(OFXGenerationError):
     """A non-identity requirement of the export format is unavailable."""
+
+
+class UnresolvedCurrencyError(MissingOFXRequirementsError):
+    """The statement has no demonstrated currency; export metadata cannot supply one."""
+
+
+class OFXCurrencyConflictError(OFXGenerationError):
+    """The export profile currency contradicts the statement currency."""

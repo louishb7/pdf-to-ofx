@@ -3,6 +3,7 @@
 from dataclasses import replace
 from collections.abc import Mapping
 
+from pdf_to_ofx.domain.currency import Currency, resolve_currency
 from pdf_to_ofx.domain.errors import FinancialCoverageError
 from pdf_to_ofx.domain.evidence import (
     ChronologySource, DocumentRegion, EvidenceReport, EvidenceStatus, FinancialRole, Interpretation,
@@ -38,6 +39,16 @@ class CoverageLedger:
         self.fields: dict[int, dict] = {}
         self.regions: tuple[DocumentRegion, ...] = ()
         self.chronology: ChronologySource | None = None
+        # Explicit currency evidence per monetary token; unsymbolized tokens are absent.
+        self.currencies: dict[SourceSpan, Currency] = {}
+
+    def observe_currency(self, source: SourceSpan, currency: Currency) -> None:
+        if source not in self.expected or self.currencies.get(source, currency) != currency:
+            raise FinancialCoverageError("Currency evidence is missing or repeated for a monetary region.")
+        self.currencies[source] = currency
+
+    def resolve_currency(self, declared: Currency | None = None) -> Currency | None:
+        return resolve_currency(self.currencies.values(), declared)
 
     def claim(self, source: SourceSpan, role: FinancialRole,
               transaction_index: int | None = None) -> None:
@@ -73,6 +84,8 @@ class CoverageLedger:
     def finish(self, statement: Statement, evidence: EvidenceReport) -> Interpretation:
         if self.expected != self.assignments.keys():
             raise FinancialCoverageError("Unclassified monetary regions remain in the document.")
+        # A declared currency may agree with, never override, document evidence.
+        statement = replace(statement, currency=self.resolve_currency(statement.currency))
         for checkpoint in statement.checkpoints:
             if (not source_has_role(checkpoint.source, checkpoint.kind, self.assignments)
                     or self.assignments[checkpoint.source].transaction_index is not None):
@@ -130,5 +143,6 @@ class CoverageLedger:
             tuple(self.assignments[source] for source in sorted(self.expected,
                   key=lambda s: (s.page, s.row, s.word_start, s.word_end))),
             regions, chronology,
+            tuple(sorted(self.currencies, key=lambda s: (s.page, s.row, s.word_start, s.word_end))),
         )
         return Interpretation(statement, replace(evidence, financial_coverage_verified=EvidenceStatus.VERIFIED), provenance)

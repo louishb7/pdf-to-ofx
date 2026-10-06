@@ -10,6 +10,7 @@ from pdf_to_ofx.domain.errors import (
     RecognizedInvalidStatementError, StatementParseError, StatementValidationError,
 )
 from pdf_to_ofx.domain.evidence import EvidenceStatus, FinancialRole, Interpretation, SourceSpan
+from pdf_to_ofx.domain.currency import Currency
 from pdf_to_ofx.domain.models import BankAccount, Chronology, Statement, Transaction
 from pdf_to_ofx.generic.provenance import VisualCoverage
 from pdf_to_ofx.generic.profile import AmountMode, BalanceMode, DateMode, LayoutProfile
@@ -37,8 +38,13 @@ class StatementContext:
     period_end: date | None = None
     opening_balance: Decimal | None = None
     closing_balance: Decimal | None = None
+    # Explicit financial declaration. It may agree with document evidence but
+    # can never override it; conflicts fail closed.
+    currency: Currency | None = None
 
     def __post_init__(self) -> None:
+        if self.currency is not None and not isinstance(self.currency, Currency):
+            raise StatementValidationError("Explicit context currency requires a Currency.")
         if (not isinstance(self.bank_id, str)
                 or (self.account is not None and not isinstance(self.account, BankAccount))):
             raise StatementValidationError("Invalid explicit statement identity context.")
@@ -253,6 +259,7 @@ class GenericStatementParser:
             transactions=tuple(transactions), account=context.account,
             chronology=Chronology.ASCENDING,
             running_balances_required=profile.balance_mode == BalanceMode.RUNNING,
+            currency=context.currency,
         )
         try:
             evidence = validate_statement(statement)

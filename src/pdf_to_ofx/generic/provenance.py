@@ -16,6 +16,7 @@ class VisualCoverage(CoverageLedger):
         self.region_ids: dict[int, str] = {}
         counts: dict[int, int] = {}
         expected = []
+        observed = []
         for row in rows:
             counts[row.page] = counts.get(row.page, 0) + 1
             self.row_indexes[id(row)] = (row.page, counts[row.page])
@@ -26,7 +27,11 @@ class VisualCoverage(CoverageLedger):
                     monetary_diagnostics=tuple(MonetaryDiagnostic(self.span(row, start, end),
                         EmptyDomainCause.MONETARY_TOKEN_INCOMPLETE) for start, end in scan.incomplete))
             expected.extend(self.span(row, region.start, region.end) for region in scan.regions)
+            observed.extend((self.span(row, region.start, region.end), region.money.currency)
+                            for region in scan.regions if region.money.currency is not None)
         super().__init__(tuple(expected))
+        for source, currency in observed:
+            self.observe_currency(source, currency)
 
     def span(self, row: Row, start: int = 0, end: int | None = None) -> SourceSpan:
         page, index = self.row_indexes[id(row)]
@@ -40,6 +45,8 @@ class VisualCoverage(CoverageLedger):
         source_scopes = {self.row_indexes[id(row)]: name for name, rows in partitions for row in rows}
         self.expected = frozenset(replace(source, region_id=source_scopes.get((source.page, source.row), "main"))
                                   for source in self.expected)
+        self.currencies = {replace(source, region_id=source_scopes.get((source.page, source.row), "main")): currency
+                           for source, currency in self.currencies.items()}
 
     def monetary(self, row: Row, region: MoneyRegion, role: FinancialRole,
                  transaction_index: int | None = None) -> None:

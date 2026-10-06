@@ -5,6 +5,7 @@ from dataclasses import replace
 from datetime import date, datetime
 from decimal import Decimal
 
+from pdf_to_ofx.domain.currency import Currency
 from pdf_to_ofx.domain.errors import StatementParseError
 from pdf_to_ofx.domain.evidence import EvidenceStatus, FinancialRole, Interpretation
 from pdf_to_ofx.domain.models import Chronology, Statement, Transaction
@@ -15,7 +16,7 @@ from pdf_to_ofx.validation.statement import validate_statement
 
 HEADERS = ("BANCO SINTETICO", "EXTRATO CONTA CORRENTE")
 DATE_PATTERN = r"\d{2}/\d{2}/\d{4}"
-MONEY_PATTERN = r"(?:0|[1-9]\d{0,2}(?:\.\d{3})*|[1-9]\d*),\d{2} [CD]"
+MONEY_PATTERN = r"R\$ (?:0|[1-9]\d{0,2}(?:\.\d{3})*|[1-9]\d*),\d{2} [CD]"
 PERIOD = re.compile(rf"Periodo: ({DATE_PATTERN}) a ({DATE_PATTERN})", re.ASCII)
 # M0 descriptions are uppercase ASCII words; extra amount columns are rejected.
 TRANSACTION = re.compile(rf"({DATE_PATTERN})\s+([A-Z][A-Z0-9 ]*?)\s+({MONEY_PATTERN})", re.ASCII)
@@ -25,7 +26,7 @@ def parse_brazilian_money(value: str) -> Decimal:
     """Parse explicit Brazilian cents and C/D signs, independent of locale."""
     if not re.fullmatch(MONEY_PATTERN, value, flags=re.ASCII):
         raise StatementParseError("Invalid Brazilian monetary value.")
-    number, direction = value.split(" ")
+    _, number, direction = value.split(" ")
     amount = Decimal(number.replace(".", "").replace(",", "."))
     return amount.copy_negate() if direction == "D" else amount
 
@@ -84,6 +85,7 @@ class SyntheticParser:
             closing_balance=closing,
             transactions=tuple(transactions),
             chronology=Chronology.ASCENDING,
+            currency=Currency("BRL"),
         )
 
     def interpret(self, document: ExtractedDocument) -> Interpretation:

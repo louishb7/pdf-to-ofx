@@ -10,6 +10,7 @@ import pytest
 
 from pdf_to_ofx.banks.synthetic import SyntheticParser
 from pdf_to_ofx.banks.inter import InterParser
+from pdf_to_ofx.domain.currency import Currency
 from pdf_to_ofx.domain.models import BankAccount, Statement, Transaction
 from pdf_to_ofx.pdf.document import ExtractedDocument, ExtractedPage
 
@@ -52,6 +53,7 @@ def ofx_reference_statement() -> Statement:
             organization="Banco Fictício", institution_id="999", bank_id="999",
             branch_id="0001", account_id="00000001",
         ),
+        currency=Currency("BRL"),
     )
 
 

@@ -9,6 +9,7 @@ from dataclasses import replace
 from datetime import date, datetime
 from decimal import Decimal
 
+from pdf_to_ofx.domain.currency import Currency
 from pdf_to_ofx.domain.errors import StatementParseError, StatementValidationError
 from pdf_to_ofx.domain.evidence import EvidenceStatus, FinancialRole, Interpretation
 from pdf_to_ofx.domain.models import BankAccount, Chronology, Statement, Transaction
@@ -143,6 +144,7 @@ class InterParser:
             period_start=_calendar_date(period[1]), period_end=_calendar_date(period[2]),
             opening_balance=None, closing_balance=closing, transactions=tuple(transactions),
             chronology=Chronology.ASCENDING, running_balances_required=True,
+            currency=Currency("BRL"),
             account=BankAccount(
                 organization="Banco Inter", institution_id="077", bank_id="077",
                 # In this profile BRANCHID retains its check-digit separator;

@@ -9,6 +9,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from pdf_to_ofx.domain.currency import Currency
     from pdf_to_ofx.domain.evidence import SourceSpan
 
 
@@ -61,3 +62,7 @@ class Statement:
     chronology: Chronology = Chronology.UNDECLARED
     running_balances_required: bool = False
     checkpoints: tuple[BalanceCheckpoint, ...] = ()
+    # Every monetary value of the statement is denominated in this currency.
+    # ``None`` means NOT PROVEN by document evidence or explicit declaration;
+    # it is never an implicit default. No conversion between currencies exists.
+    currency: Currency | None = None

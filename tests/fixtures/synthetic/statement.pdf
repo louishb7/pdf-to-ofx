@@ -43,11 +43,11 @@ endobj
 endobj
 8 0 obj
 <<
-/Length 518
+/Length 536
 >>
 stream
 1 0 0 1 0 0 cm  BT /F1 12 Tf 14.4 TL ET
-BT 1 0 0 1 40 800 Tm /F2 10 Tf 12 TL 18 TL (BANCO SINTETICO) Tj T* (EXTRATO CONTA CORRENTE) Tj T*  T* (Periodo: 01/09/2026 a 05/09/2026) Tj T*  T* (Saldo anterior: 1.000,00 C) Tj T*  T* (01/09/2026  PIX RECEBIDO EMPRESA TESTE       500,00 C) Tj T* (02/09/2026  TARIFA BANCARIA                    35,00 D) Tj T* (03/09/2026  PAGAMENTO FORNECEDOR TESTE        200,00 D) Tj T* (05/09/2026  PIX RECEBIDO CLIENTE DEMO         100,00 C) Tj T*  T* (Saldo final: 1.365,00 C) Tj T* ET
+BT 1 0 0 1 40 800 Tm /F2 10 Tf 12 TL 18 TL (BANCO SINTETICO) Tj T* (EXTRATO CONTA CORRENTE) Tj T*  T* (Periodo: 01/09/2026 a 05/09/2026) Tj T*  T* (Saldo anterior: R$ 1.000,00 C) Tj T*  T* (01/09/2026  PIX RECEBIDO EMPRESA TESTE       R$ 500,00 C) Tj T* (02/09/2026  TARIFA BANCARIA                    R$ 35,00 D) Tj T* (03/09/2026  PAGAMENTO FORNECEDOR TESTE        R$ 200,00 D) Tj T* (05/09/2026  PIX RECEBIDO CLIENTE DEMO         R$ 100,00 C) Tj T*  T* (Saldo final: R$ 1.365,00 C) Tj T* ET
  
 endstream
 endobj
@@ -73,5 +73,5 @@ trailer
 /Size 9
 >>
 startxref
-1491
+1509
 %%EOF

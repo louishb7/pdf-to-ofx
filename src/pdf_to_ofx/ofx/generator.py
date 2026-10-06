@@ -6,13 +6,14 @@ Format choices remain provisional; Athenas compatibility is unverified.
 import hashlib
 import json
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from decimal import Decimal
 from xml.etree import ElementTree as ET
 
 from pdf_to_ofx.domain.errors import (
     MissingOFXMetadataError, MissingOFXRequirementsError, OFXGenerationError,
+    OFXCurrencyConflictError, UnresolvedCurrencyError,
 )
 from pdf_to_ofx.domain.models import BankAccount, Statement, Transaction
 from pdf_to_ofx.validation.statement import validate_statement
@@ -36,7 +37,7 @@ class OFXProfile:
     bank_id: str
     account_id: str
     account_type: str = "CHECKING"
-    currency: str = "BRL"
+    currency: str | None = None
     branch_id: str | None = None
     organization: str | None = None
     institution_id: str | None = None
@@ -68,10 +69,12 @@ def _resolve_profile(statement: Statement, profile: OFXProfile | None) -> OFXPro
             raise MissingOFXMetadataError("Real-bank export requires explicit account metadata.")
     if not isinstance(profile, OFXProfile):
         raise OFXGenerationError("Invalid OFX export profile.")
-    for value in (profile.bank_id, profile.account_id, profile.account_type, profile.currency):
+    for value in (profile.bank_id, profile.account_id, profile.account_type):
         if value is None or isinstance(value, str) and not value.strip():
             raise MissingOFXMetadataError("Required OFX profile metadata is absent.")
         _check_text(value)
+    if profile.currency is not None:
+        _check_text(profile.currency)
     real_bank = not synthetic
     for value in (profile.branch_id, profile.organization, profile.institution_id):
         if real_bank or value is not None:
@@ -87,7 +90,7 @@ def _resolve_profile(statement: Statement, profile: OFXProfile | None) -> OFXPro
                 or profile.institution_id.strip() == "000"
                 or profile.organization.strip().casefold() == "synthetic bank"):
             raise OFXGenerationError("Synthetic account metadata cannot be used for a real bank.")
-        if statement.account is not None and profile != account_profile(statement.account):
+        if statement.account is not None and replace(profile, currency=None) != account_profile(statement.account):
             raise OFXGenerationError("Export profile contradicts the statement account metadata.")
     return profile
 
@@ -135,9 +138,16 @@ def validate_ofx_export(statement: Statement, profile: OFXProfile | None = None)
     profile = _resolve_profile(statement, profile)
     if profile.account_type not in {"CHECKING", "SAVINGS"}:
         raise OFXGenerationError("Unsupported OFX account type.")
-    if (len(profile.currency) != 3 or not profile.currency.isascii()
-            or not profile.currency.isalpha() or not profile.currency.isupper()):
-        raise OFXGenerationError("OFX currency must be a three-letter uppercase code.")
+    if statement.currency is None:
+        raise UnresolvedCurrencyError("Currency could not be resolved from statement contents.")
+    if profile.currency is not None:
+        if profile.currency != statement.currency.code:
+            raise OFXCurrencyConflictError(
+                f"OFX profile specifies '{profile.currency}' but statement contains evidence for '{statement.currency.code}'."
+            )
+        if (len(profile.currency) != 3 or not profile.currency.isascii()
+                or not profile.currency.isalpha() or not profile.currency.isupper()):
+            raise OFXGenerationError("OFX currency must be a three-letter uppercase code.")
     if statement.closing_balance is None:
         raise MissingOFXRequirementsError("The provisional OFX profile requires a closing balance.")
     for transaction in statement.transactions:
@@ -168,7 +178,8 @@ def generate_ofx(statement: Statement, profile: OFXProfile | None = None) -> str
     _add(status, "CODE", "0")
     _add(status, "SEVERITY", "INFO")
     bank_statement = ET.SubElement(response, "STMTRS")
-    _add(bank_statement, "CURDEF", profile.currency)
+    assert statement.currency is not None
+    _add(bank_statement, "CURDEF", statement.currency.code)
     account = ET.SubElement(bank_statement, "BANKACCTFROM")
     _add(account, "BANKID", profile.bank_id)
     if profile.branch_id is not None:

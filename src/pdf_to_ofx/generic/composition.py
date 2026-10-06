@@ -47,7 +47,7 @@ def material_key(hypothesis: Interpretation) -> tuple:
         source_key(f.description_sources), source_key((f.amount_source,)) if f.amount_source else (),
         source_key((f.balance_source,)) if f.balance_source else (),
         source_key((f.direction_source,)) if f.direction_source else ()) for f in p.transactions)
-    return (s.period_start, s.period_end, s.opening_balance, s.closing_balance,
+    return (s.period_start, s.period_end, s.opening_balance, s.closing_balance, s.currency,
             s.transactions, hypothesis.evidence, fields,
             p.chronology.economic_order if p.chronology else None,
             tuple(sorted((source_key((a.source,)), a.role, a.transaction_index)
@@ -97,6 +97,8 @@ def prepare_composition(document: ExtractedDocument, profile: LayoutProfile,
                         legacy_context: bool = True) -> CompositionInput:
     original = reconstruct_rows(document, profile.tolerances)
     coverage = VisualCoverage(original, profile.tolerances)
+    # Contradictory currency evidence is a hard stop before any role search.
+    coverage.resolve_currency(context.currency if context is not None else None)
     try:
         rows = continue_pages(original, profile)
     except OperatorFailure:
@@ -202,7 +204,7 @@ def materialize_composition(prepared: CompositionInput, dated: tuple[DatedSegmen
     statement = Statement(context.bank_id, "generic-structural-v1", context.period_start,
         context.period_end, context.opening_balance, context.closing_balance, tuple(transactions), context.account,
         chronology=chronology, running_balances_required=profile.balance_mode == BalanceMode.RUNNING and all(r.running_balance for r in amounts),
-        checkpoints=checkpoints)
+        checkpoints=checkpoints, currency=context.currency)
     evidence = financial_evidence(statement, body, tuple(item.group_position for item in dated),
         tuple(direction.group_position for direction in directions), dict(prepared.totals), profile.balance_mode,
         control_sources={c.position: coverage.span(c.row, c.amounts[0].start, c.amounts[0].end)

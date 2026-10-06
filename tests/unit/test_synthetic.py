@@ -29,11 +29,11 @@ def test_parses_all_normalized_fields(statement: Statement) -> None:
 
 
 @pytest.mark.parametrize(("old", "new"), [
-    ("35,00 D", "35,xx D"), ("35,00 D", "35,00"),
+    ("R$ 35,00 D", "R$ 35,xx D"), ("R$ 35,00 D", "35,00"),
     ("02/09/2026", "31/09/2026"), ("02/09/2026", "2026-09-02"),
     ("Periodo:", "Dates:"), ("Saldo anterior:", "Unknown balance:"),
-    ("Saldo final: 1.365,00 C", ""),
-    ("TARIFA BANCARIA", ""), ("35,00 D", "35,00 D 10,00 C"),
+    ("Saldo final: R$ 1.365,00 C", ""),
+    ("TARIFA BANCARIA", ""), ("R$ 35,00 D", "R$ 35,00 D R$ 10,00 C"),
     ("Saldo final:", "UNEXPECTED TEXT\nSaldo final:"),
 ])
 def test_malformed_fields_and_rows_are_never_skipped(synthetic_text: str, old: str, new: str) -> None:

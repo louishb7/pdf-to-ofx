@@ -6,9 +6,9 @@ from pathlib import Path
 
 from pdf_to_ofx.banks.detector import detect_parser
 from pdf_to_ofx.domain.errors import (
-    AmbiguousStatementError, ConversionError, MissingOFXMetadataError,
-    MissingOFXRequirementsError, OFXGenerationError, PDFExtractionError,
-    StatementParseError, StatementValidationError, UnsupportedLayoutError,
+    AmbiguousStatementError, ConversionError, CurrencyConflictError, MissingOFXMetadataError,
+    MissingOFXRequirementsError, OFXCurrencyConflictError, OFXGenerationError, PDFExtractionError,
+    StatementParseError, StatementValidationError, UnresolvedCurrencyError, UnsupportedLayoutError,
 )
 from pdf_to_ofx.domain.evidence import AnalysisStatus, DocumentRegion, EvidenceReport, EvidenceStatus, FinancialRole, InferenceDiagnostic, Provenance, default_diagnostic
 from pdf_to_ofx.domain.models import BankAccount, Statement
@@ -134,7 +134,7 @@ def analyze_pdf(path: Path, *, layout_profile: LayoutProfile | None = None,
         return StatementAnalysis(AnalysisStatus.INVALID, bank_name=name, reason=str(error),
                                  layout_profile=layout_profile,
                                  error_type=StatementParseError if isinstance(error, OperatorFailure) else type(error),
-                                 blocking_capabilities=(error.capability,) if isinstance(error, OperatorFailure) else ())
+                                 blocking_capabilities=(error.capability,) if isinstance(error, (OperatorFailure, CurrencyConflictError)) else ())
 
 
 def _approved_statement(analysis: StatementAnalysis) -> Statement:
@@ -171,6 +171,10 @@ def assess_export_readiness(analysis: StatementAnalysis,
         validate_ofx_export(statement, profile)
     except MissingOFXMetadataError:
         return ExportReadiness(ExportStatus.EXPORT_METADATA_REQUIRED, ("account_metadata_missing",))
+    except UnresolvedCurrencyError:
+        return ExportReadiness(ExportStatus.EXPORT_REQUIREMENTS_MISSING, ("currency_unresolved",))
+    except OFXCurrencyConflictError:
+        return ExportReadiness(ExportStatus.EXPORT_BLOCKED, ("currency_conflict",))
     except MissingOFXRequirementsError:
         return ExportReadiness(ExportStatus.EXPORT_REQUIREMENTS_MISSING, ("closing_balance_missing",))
     except StatementValidationError:
